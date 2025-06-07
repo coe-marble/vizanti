@@ -5,13 +5,15 @@ import os
 import fcntl
 import sys
 import rospy
+import json
+import dynamic_reconfigure
 
+from dynamic_reconfigure.client import Client
 from std_srvs.srv import Trigger, TriggerResponse
 from vizanti.srv import GetNodeParameters, GetNodeParametersResponse
 from vizanti.srv import LoadMap, LoadMapResponse, SaveMap, SaveMapResponse
 from vizanti.srv import RecordRosbag, RecordRosbagResponse
 from vizanti.srv import ManageNode, ListPackages, ListExecutables, ListExecutablesResponse, ListPackagesResponse
-
 
 class ServiceHandler:
 
@@ -23,6 +25,7 @@ class ServiceHandler:
 
 		self.get_nodes_service = rospy.Service('vizanti/get_dynamic_reconfigure_nodes', Trigger,self. get_dynamic_reconfigure_nodes)
 		self.get_node_parameters_service = rospy.Service('vizanti/get_node_parameters', GetNodeParameters, self.get_node_parameters)
+		self.get_node_parameter_info_service = rospy.Service('vizanti/get_node_parameter_info', GetNodeParameters, self.get_node_parameter_info)
 
 		self.load_map_service = rospy.Service('vizanti/load_map', LoadMap, self.load_map)
 		self.save_map_service = rospy.Service('vizanti/save_map', SaveMap, self.save_map)
@@ -180,20 +183,70 @@ class ServiceHandler:
 			return SaveMapResponse(success=False, message=str(e))
 
 	def get_dynamic_reconfigure_nodes(self, req):
-		list_nodes_output = subprocess.check_output(["rosrun", "dynamic_reconfigure", "dynparam", "list"]).decode('utf-8')
-		nodes_list = list_nodes_output.strip().split("\n")
-
+		nodes_list = dynamic_reconfigure.find_reconfigure_services()
 		response = TriggerResponse()
 		response.success = True
-		response.message = "\n".join(nodes_list)
+		response.message = json.dumps(nodes_list)
+		return response
+
+	def get_node_parameter_info(self, req):
+		response = GetNodeParametersResponse()
+
+		try:
+			client = Client(req.node, timeout=2.0)
+			param_desc = client.get_parameter_descriptions(timeout=2.0)
+
+			param_info = {}
+			for p in param_desc:
+				name = p["name"]
+				param_info[name] = {}
+				param_info[name]["type"] = p["type"]
+				param_info[name]["min"] = p["min"]
+				param_info[name]["max"] = p["max"]
+				param_info[name]["description"] = p["description"]
+
+				#is it an enum?
+				if p["edit_method"] != "":
+					parsed = json.loads(p["edit_method"].replace("\'","\""))
+					enum_options = []
+					for e in parsed["enum"]:
+						vals = {}
+						vals["value"] =  e["value"]
+						vals["description"] =  e["description"]
+						enum_options.append(vals)
+
+					param_info[name]["enum"] = enum_options
+
+			response.parameters = json.dumps(param_info)
+		except Exception as e:
+			rospy.logerr(f"Failed to fetch parameter info from {req.node}: {e}")
+			response.parameters = "[]"
 
 		return response
 
 	def get_node_parameters(self, req):
-		node_params = subprocess.check_output(["rosrun", "dynamic_reconfigure", "dynparam", "get", req.node]).decode('utf-8')
-
 		response = GetNodeParametersResponse()
-		response.parameters = node_params
+
+		try:
+			client = Client(req.node, timeout=2.0)
+			config = client.get_configuration(timeout=2.0)
+
+			param_list = []
+			for name, value in config.items():
+				# Filter out internal dynamic_reconfigure keys
+				if name.startswith('__'):
+					continue
+
+				value_type = type(value).__name__
+				if value_type == "Config":
+					continue
+				
+				param_list.append([name, value])
+
+			response.parameters = json.dumps(param_list)
+		except Exception as e:
+			rospy.logerr(f"Failed to fetch parameters from {req.node}: {e}")
+			response.parameters = "[]"
 
 		return response
 

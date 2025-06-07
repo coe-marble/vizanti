@@ -10,11 +10,13 @@ async function getDynamicReconfigureNodes() {
 	});
 
 	return new Promise((resolve, reject) => {
-		getNodesService.callService(new ROSLIB.ServiceRequest(), (result) => {
-			resolve(result.message.split("\n"));
-		}, (error) => {
+		try {
+			getNodesService.callService(new ROSLIB.ServiceRequest(), (result) => {
+				resolve(JSON.parse(result.message));
+			});
+		} catch (error) {
 			reject(error);
-		});
+		}
 	});
 }
 
@@ -26,14 +28,33 @@ async function getNodeParameters(node) {
 	});
 
 	return new Promise((resolve, reject) => {
-		const request = new ROSLIB.ServiceRequest({ node });
-		getNodeParametersService.callService(request, (result) => {
-			let parsedParams = JSON.parse(convertAlmostJsonToValidJson(result.parameters));
-			delete parsedParams.groups;
-			resolve(parsedParams);
-		}, (error) => {
+		try {
+			const request = new ROSLIB.ServiceRequest({ node });
+			getNodeParametersService.callService(request, (result) => {
+				resolve(JSON.parse(result.parameters));
+			});
+		} catch (error) {
 			reject(error);
-		});
+		}
+	});
+}
+
+async function getNodeParameterInfo(node) {
+	const getNodeParametersService = new ROSLIB.Service({
+		ros: rosbridge.ros,
+		name: "/vizanti/get_node_parameter_info",
+		serviceType: "vizanti/GetNodeParameters",
+	});
+
+	return new Promise((resolve, reject) => {
+		try {
+			const request = new ROSLIB.ServiceRequest({ node });
+			getNodeParametersService.callService(request, (result) => {
+				resolve(JSON.parse(result.parameters));
+			});
+		} catch (error) {
+			reject(error);
+		}
 	});
 }
 
@@ -61,17 +82,17 @@ async function setNodeParamValue(fullname, type, newValue) {
 	};
 
 	switch (type) {
-		case "string": valueConfig.strs.push({ name: paramName, value: newValue }); break;
+		case "str": valueConfig.strs.push({ name: paramName, value: newValue }); break;
 		case "int": valueConfig.ints.push({ name: paramName, value: newValue }); break;
-		case "float": valueConfig.doubles.push({ name: paramName, value: newValue }); break;
+		case "double": valueConfig.doubles.push({ name: paramName, value: newValue }); break;
 		case "bool": valueConfig.bools.push({ name: paramName, value: newValue }); break;
-		default: return Promise.reject(`Invalid parameter value type: ${valueType}`);
+		default: return Promise.reject(`Invalid parameter value type: ${type}`);
 	}
 
 	return new Promise((resolve, reject) => {
 		const request = new ROSLIB.ServiceRequest({ config: valueConfig });
 		setParamClient.callService(request, (response) => {
-			console.log(`Parameter ${paramName} set to:`, newValue);
+			//console.log(`Parameter ${paramName} set to:`, newValue);
 			resolve(response);
 		}, (error) => {
 			console.error(`Failed to call set_parameters service for ${nodeName}:`, error);
@@ -80,61 +101,128 @@ async function setNodeParamValue(fullname, type, newValue) {
 	});
 }
 
-function createParameterInput(fullname, defaultValue, type) {
+function createParameterInput(fullname, defaultValue, info) {
+	const min = info.min;
+	const max = info.max;
+	const type = info.type;
+	const desc = info.description;
+	const is_enum = info.enum !== undefined;
+	
 	const name = fullname.replace(nodeName+"/","").replaceAll("_","_<wbr>");
 	const id = "${uniqueID}_"+fullname;
 	const arrowId = `${id}_arrow`;
 	let inputElement;
 
-	switch (type) {
-		case "string":
-			inputElement = `
-				<label for="${id}"><i>string </i> ${name}:</label>
-				<input id="${id}" type="text" value="${defaultValue}"><span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
-				<div class="spacer"></div>`;
-			break;
-		case "int":
-			inputElement = `
-				<label for="${id}"><i>int </i> ${name}:</label>
-				<input type="number" value="${defaultValue}" step="1" id="${id}"><span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
-				<div class="spacer"></div>`;
-			break;
-		case "float":
-			inputElement = `
-				<label for="${id}"><i>float </i>${name}:</label>
-				<input type="number" value="${defaultValue}" step="0.001" id="${id}"><span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
-				<div class="spacer"></div>`;
-			break;
-		case "bool":
-			inputElement = `
-				<label for="${id}"><i>bool </i>${name}:</label>
-				<input type="checkbox" id="${id}" ${defaultValue ? "checked" : ""}><span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
-				<div class="spacer"></div>`;
-			break;
-		default:
-			console.error("Invalid parameter type:", type);
-			return;
+	if (is_enum) {
+		const optionsHtml = info.enum
+			.map(enumItem => {
+				const isSelected = enumItem.value === defaultValue ? 'selected' : '';
+				return `<option value="${enumItem.value}" ${isSelected}>(${enumItem.value}) ${enumItem.description}</option>`;
+			})
+			.join('');
+		inputElement = `
+			<label for="${id}"><i>enum </i> ${name}:</label>
+			<div class="input-group">
+				<select id="${id}">
+					${optionsHtml}
+				</select>
+				<span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
+			</div>
+			<p class="minicomment">${desc}</p>
+			<div class="spacer"></div>`;
+	} else {
+		switch (type) {
+			case "str":
+				inputElement = `
+					<label for="${id}"><i>string </i> ${name}:</label>
+					<div class="input-group">
+						<input style="width: 30%;" id="${id}" type="text" value="${defaultValue}">
+						<span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
+					</div>
+					<p class="minicomment">${desc}</p>
+					<div class="spacer"></div>`;
+				break;
+			case "int":
+				inputElement = `
+					<label for="${id}"><i>int </i> ${name}:</label>
+					<div class="input-group">
+						<input type="number" value="${defaultValue}" step="1" min="${min}" max="${max}" id="${id}">
+						<span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
+					</div>
+					<p class="minicomment">${desc}</p>
+					<div class="spacer"></div>`;
+				break;
+			case "double":
+			case "float":
+				inputElement = `
+					<label for="${id}"><i>double </i>${name}:</label>
+					<div class="input-group">
+						<input type="number" value="${defaultValue}" step="0.001" min="${min}" max="${max}" id="${id}">
+						<span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
+					</div>
+					<p class="minicomment">${desc}</p>
+					<div class="spacer"></div>`;
+				break;
+			case "bool":
+				inputElement = `
+					<label for="${id}"><i>bool </i>${name}:</label>
+					<div class="input-group">
+						<input type="checkbox" id="${id}" ${defaultValue ? "checked" : ""}>
+						<span id="${arrowId}" class="arrow" style="visibility: hidden;">➡</span>
+					</div>
+					<p class="minicomment">${desc}</p>
+					<div class="spacer"></div>`;
+				break;
+			default:
+				console.error("Invalid parameter type:", type);
+				return;
+		}
 	}
 
 	paramBox.insertAdjacentHTML("beforeend", inputElement);
 
-	setTimeout(()=>{
+	setTimeout(() => {
 		document.getElementById(id).addEventListener("change", (event) => {
-			let val;
+			let processedValue;
 	
-			switch(type){
-				case "string": val = event.target.value; break;
-				case "int": val = parseInt(event.target.value); break;
-				case "float": val = parseFloat(event.target.value); break;
-				case "bool": val = event.target.checked; break;
+			if (is_enum) {
+				// For enums, determine the actual type from the enum value and parse accordingly
+				const selectedEnumValue = event.target.value;
+				const enumItem = info.enum.find(item => item.value == selectedEnumValue);
+				
+				if (enumItem) {
+					processedValue = enumItem.value;
+				} else {
+					console.error("Selected enum value not found:", selectedEnumValue);
+					return;
+				}
+			} else {
+				switch(type) {
+					case "str": 
+						processedValue = event.target.value; 
+						break;
+					case "int": 
+						processedValue = parseInt(event.target.value); 
+						break;
+					case "double":
+					case "float": 
+						processedValue = parseFloat(event.target.value); 
+						break;
+					case "bool": 
+						processedValue = event.target.checked; 
+						break;
+					default:
+						console.error("Unsupported type for value processing:", type);
+						return;
+				}
 			}
-			setNodeParamValue(fullname, type, val);
+			
+			setNodeParamValue(fullname, type, processedValue);
 	
 			const arrowElement = document.getElementById(arrowId);
 			arrowElement.style.visibility = "visible";
 			arrowElement.style.animation = "none";
-			// Force reflow to make the new animation take effect
-			arrowElement.offsetHeight;
+			arrowElement.offsetHeight; // Force reflow
 			arrowElement.style.animation = null;
 	
 			arrowElement.addEventListener('animationend', () => {
@@ -144,44 +232,27 @@ function createParameterInput(fullname, defaultValue, type) {
 	}, 1);
 }
 
-
-
-function detectValueType(value) {
-	if (typeof value == "boolean") {
-		return "bool";
-	}
-
-	//this is incorrectly detecting floats as integers, shelfed for now
-	//if (Number.isInteger(value)) {
-		//return "int";
-	//}
-
-	if (isNaN(value)) {
-		return "string";
-	}
-
-	return "float";
-}
-
-function convertAlmostJsonToValidJson(almostJson) {
-	const validJson = almostJson.replace(/'/g, '"');
-	return validJson.replace(/(True|False)/g, (match) => {
-		return match.toLowerCase();
-	});
-}
-
 let nodeName = "";
-let cached_params = undefined;
+let cached_info = {};
+let cached_params = {};
+let is_loaded = false;
 
 async function listParameters(){
-	if(nodeName == "" || !cached_params[nodeName]){
+	if (nodeName === "") {
 		return;
 	}
-	loaderSpinner.style.display = "block";
 
+	loaderSpinner.style.display = "block";
 	paramBox.innerHTML = "";
-	for (const [key,value] of Object.entries(cached_params[nodeName])) {
-		createParameterInput(key,value,detectValueType(value));
+
+	if(!cached_params[nodeName]){
+		setTimeout(listParameters,1000);
+		return;
+	}
+
+	for (const [index, entry] of Object.entries(cached_params[nodeName])) {
+		let [key,value] = entry;
+		createParameterInput(key,value,cached_info[nodeName][key]);
 	}
 	loaderSpinner.style.display = "none";
 }
@@ -189,16 +260,39 @@ async function listParameters(){
 async function getAll(results){
 	loaderSpinner.style.display = "block";
 	cached_params = {};
+
+	const [, params] = await Promise.all([
+		(async () => {
+			if(cached_info[nodeName] == undefined){
+				cached_info[nodeName] = await getNodeParameterInfo(nodeName);
+			}
+		})(),
+		getNodeParameters(nodeName)
+	]);
+	
+	cached_params[nodeName] = params;
+	listParameters();
+
 	for (const node of results) {
-		cached_params[node] = await getNodeParameters(node);
-		if(node == nodeName){
-			listParameters();
+		if(node != nodeName){
+			if(cached_info[node] == undefined){
+				cached_info[node] = await getNodeParameterInfo(node);
+			}
+			cached_params[node] = await getNodeParameters(node);
 		}
 	}
 	loaderSpinner.style.display = "none";
 }
 
+let loading_nodes = false;
+
 async function setNodeList(){
+	if(loading_nodes){
+		return;
+	}
+
+	loading_nodes = true;
+	
 	let results = await getDynamicReconfigureNodes();
 	let nodelist = "";
 	for (const node of results) {
@@ -212,9 +306,8 @@ async function setNodeList(){
 		nodeSelector.value = nodeName;
 	}
 
-	if(!cached_params){
-		await getAll(results);
-	}
+	await getAll(results);
+	loading_nodes = false;
 }
 
 nodeSelector.addEventListener("change", (event)=>{
