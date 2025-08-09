@@ -8,11 +8,13 @@ Vizanti is a web-based visualization and control tool developed for more conveni
 
 ## Installation
 
+This branch is compatible with [ROS Noetic](https://wiki.ros.org/noetic/Installation) on 20.04 and [ROS One](https://ros.packages.techfak.net/) on 22.04 and 24.04, for ROS 2 [see here](https://github.com/MoffKalast/vizanti/tree/ros2).
+
 As a field tool, Vizanti is designed to operate just as well without internet access, and as such the intended way is to host it on a robot, with rosbridge autoconnecting to the host IP. 
 
 ```bash
 cd ~/catkin_ws/src
-git clone -b noetic-devel https://github.com/MoffKalast/vizanti.git
+git clone -b ros1 https://github.com/MoffKalast/vizanti.git
 cd ..
 rosdep install -i --from-path src/vizanti -y
 catkin_make
@@ -23,7 +25,7 @@ catkin_make
 Alternatively, you can also containerize Vizanti. For that you need to [install Docker](https://docs.docker.com/engine/install/ubuntu/) and build the container:
 
 ```bash
-git clone -b noetic-devel https://github.com/MoffKalast/vizanti.git
+git clone -b ros1 https://github.com/MoffKalast/vizanti.git
 cd vizanti
 docker build -f docker/Dockerfile -t vizanti:1.0 .
 ```
@@ -35,7 +37,7 @@ roslaunch vizanti server.launch
 ```  
 Or with Docker:
 ```bash
-docker run -dit --net=host --name vizanti-noetic vizanti:1.0
+docker run -dit --net=host --name vizanti-ros1 vizanti:1.0
 ```  
 
 The web app can be accessed at `http://<host_ip>:5000`. Client settings are automatically saved in localStorage. The satelite imagery renderer also uses the indexedDB to store tiles for offline use (note that this is IP specific). By default the rosbridge instance also occupies port 5001.
