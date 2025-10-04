@@ -1,4 +1,5 @@
-import '../lib/roslib.min.js';
+//import '../lib/roslib.min.js';
+import './rosbridge_shim.js';
 
 const paramsModule = await import(`${base_url}/ros_launch_params`);
 const params = paramsModule.default;
