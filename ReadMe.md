@@ -46,7 +46,7 @@ The web app can be accessed at `http://<host_ip>:5000`. Client settings are auto
 
 If you're using a mobile device connected to a robot's hotspot that doesn't have internet access and can't load the page, turn off mobile data. This will prevent the browser from sending packets to the wrong gateway.
 
-####  Check [the wiki](https://github.com/MoffKalast/vizanti/wiki) for usage and configuration instructions, as well as feature and compatibility info.
+####  Check [the wiki](https://moffkalast.github.io/vizanti_docs) for usage and configuration instructions, as well as feature and compatibility info.
 
 ## Recommended - RWS Backend
 
