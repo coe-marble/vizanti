@@ -66,6 +66,7 @@ icons["costmap"] = await imageToDataURL("assets/costmap.svg");
 icons["raw"] = await imageToDataURL("assets/rawmap.svg");
 icons["raw_transparent"] = await imageToDataURL("assets/rawmap_transparent_white.svg");
 icons["raw_transparent_black"] = await imageToDataURL("assets/rawmap_transparent_black.svg");
+icons["sonar"] = await imageToDataURL("assets/sonar.svg");
 
 let listener = undefined;
 let map_topic = undefined;
@@ -110,7 +111,6 @@ const savePathBox = document.getElementById("{uniqueID}_savepath");
 const loadButton = document.getElementById('{uniqueID}_load');
 const saveButton = document.getElementById('{uniqueID}_save');
 
-//rendring colour modes: 0 = map, 1 = costmap, 2 = raw
 const colourSchemeBox = document.getElementById('{uniqueID}_colour_scheme');
 colourSchemeBox.selectedIndex = topic.includes("cost") ? 1 : 0;
 colourSchemeBox.addEventListener('change', saveSettings);
@@ -261,14 +261,14 @@ function connect(){
 		name : topic,
 		messageType : 'nav_msgs/OccupancyGrid',
 		throttle_rate: parseInt(throttle.value), // throttle to once every second max
-		compression: "cbor"
+		compression: "cbor",
+		queue_length: 1
 	});
 
 	status.setWarn("No data received.");
 
 	worker_thread.onmessage = (e) => {
 		setTimeout(()=>{
-
 			const img = e.data.image
 			temp_canvas.width = img.width
 			temp_canvas.height = img.height
@@ -276,7 +276,7 @@ function connect(){
 			map_data = new_map_data;
 			drawMap();
 			status.setOK();
-		},12);
+		},1);
 	};
 	
 	listener = map_topic.subscribe((msg) => {
@@ -323,7 +323,6 @@ function queueWorkerMsg(msg){
 	);
 
 	new_map_data = msg;
-	map_data = undefined;
 
 	worker_thread.postMessage({
 		map_msg: msg,
