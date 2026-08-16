@@ -21,9 +21,9 @@ const LOG_LEVELS = {
 
 const DIAG_LEVELS = {
 	0: {name: "OK", colour: "#2e8b57", bright: "#58d68d", icon: "green", rank: 0},
-	3: {name: "STALE", colour: "#7f8c8d", bright: "#b0bec5", icon: "default", rank: 1},
 	1: {name: "WARN", colour: "#c8891a", bright: "#f5b041", icon: "yellow", rank: 2},
-	2: {name: "ERROR", colour: "#c0392b", bright: "#ec7063", icon: "red", rank: 3}
+	2: {name: "ERROR", colour: "#c0392b", bright: "#ec7063", icon: "red", rank: 3},
+	3: {name: "STALE", colour: "#7f8c8d", bright: "#b0bec5", icon: "default", rank: 1}
 };
 
 const DEFAULT_THROTTLE = {};
@@ -32,7 +32,7 @@ DEFAULT_THROTTLE[DIAG_TYPE] = 500;
 
 const MAX_HISTORY = 10;
 const MAX_ENTRIES = 200;
-const MAX_TEXT = 600;
+const MAX_TEXT = 80;
 const REDRAW_MS = 200;
 
 let topic = getTopic("{uniqueID}");
@@ -125,7 +125,17 @@ function getGroup(key){
 	let group = groups.get(key);
 
 	if(group === undefined){
-		group = {key: key, level: 0, rank: -1, count: 0, last_seen: 0, message: "", entries: new Map(), dom: undefined};
+		group = {
+			key: key,
+			level: 0,
+			rank: -1,
+			count: 0,
+			last_seen: 0,
+			message: "",
+			entries: new Map(),
+			history: [],
+			dom: undefined
+		};
 		groups.set(key, group);
 	}
 
@@ -136,7 +146,15 @@ function getEntry(group, key){
 	let entry = group.entries.get(key);
 
 	if(entry === undefined){
-		entry = {key: key, level: 0, rank: 0, count: 0, last_seen: 0, value: "", history: [], dom: undefined};
+		entry = {
+			key: key,
+			level: 0,
+			rank: 0,
+			count: 0,
+			last_seen: 0,
+			value: "",
+			dom: undefined
+		};
 		group.entries.set(key, entry);
 	}
 
@@ -159,23 +177,40 @@ function trimEntries(group){
 	}
 }
 
-function pushHistory(entry, text){
-	for(let i = 0; i < entry.history.length; i++){
-		if(entry.history[i].text == text){
-			const item = entry.history.splice(i, 1)[0];
-			item.count++;
-			entry.history.push(item);
-			return;
-		}
+function pushMessage(group, location, text, level, rank, now){
+	const last = group.history[group.history.length - 1];
+
+	if(last !== undefined && last.text == text){
+		last.count++;
+		last.last_seen = now;
+		return;
 	}
 
-	entry.history.push({text: text, count: 1});
+	group.history.push({
+		location: location,
+		text: text,
+		level: level,
+		rank: rank,
+		count: 1,
+		last_seen: now,
+		dom: undefined
+	});
 
-	while(entry.history.length > MAX_HISTORY)
-		entry.history.shift();
+	while(group.history.length > MAX_HISTORY){
+		const removed = group.history.shift();
+
+		if(removed.dom !== undefined)
+			removed.dom.root.remove();
+	}
 }
 
 function handleLog(msg){
+
+	function remove_file_path(path){
+		const str = String(path);
+		const index = str.lastIndexOf("/");
+		return index >= 0 ? str.substring(index + 1) : str;
+	}
 
 	if(msg.name.includes("vizanti")){
 		return;
@@ -185,22 +220,19 @@ function handleLog(msg){
 	const info = getLevelInfo(msg.level);
 	const group = getGroup(msg.name != "" ? msg.name : "(unnamed)");
 
-	if(info.rank > group.rank){
-		group.rank = info.rank;
-		group.level = msg.level;
-	}
-
 	group.count++;
 	group.last_seen = now;
 
-	const entry = getEntry(group, `${msg.file}:${msg.function}:${msg.line}`);
-	entry.level = msg.level;
-	entry.rank = info.rank;
-	entry.count++;
-	entry.last_seen = now;
+	pushMessage(group, `${remove_file_path(msg.file)}:${msg.function}:${msg.line}`, truncate(msg.msg), msg.level, info.rank, now);
 
-	pushHistory(entry, truncate(msg.msg));
-	trimEntries(group);
+	group.rank = -1;
+
+	for(const item of group.history){
+		if(item.rank > group.rank){
+			group.rank = item.rank;
+			group.level = item.level;
+		}
+	}
 }
 
 function handleDiagnostics(msg){
@@ -284,12 +316,27 @@ function buildGroup(group){
 
 	listdiv.appendChild(root);
 
-	return {root: root, badge: badge, name: name, sub: sub, age: age, body: body};
+	return {
+		root: root,
+		badge: badge,
+		name: name,
+		sub: sub,
+		age: age,
+		body: body
+	};
 }
 
-function buildLine(dom){
+function buildLogRow(group){
 	const root = document.createElement("div");
-	root.className = "diagnostics_line";
+	root.className = "diagnostics_log_entry";
+
+	const location = document.createElement("div");
+	location.className = "diagnostics_location";
+
+	const lines = document.createElement("div");
+
+	const line = document.createElement("div");
+	line.className = "diagnostics_line";
 
 	const gutter = document.createElement("div");
 	gutter.className = "diagnostics_gutter";
@@ -301,72 +348,55 @@ function buildLine(dom){
 	const text = document.createElement("span");
 	text.className = "diagnostics_value";
 
-	root.appendChild(gutter);
-	root.appendChild(text);
-	dom.lines.appendChild(root);
+	line.appendChild(gutter);
+	line.appendChild(text);
+	lines.appendChild(line);
 
-	const row = {root: root, dup: dup, text: text};
-	dom.rows.push(row);
+	root.appendChild(location);
+	root.appendChild(lines);
+	group.dom.body.appendChild(root);
 
-	return row;
+	return {
+		root: root,
+		location: location,
+		dup: dup,
+		text: text
+	};
 }
 
 function buildEntry(group){
 	const root = document.createElement("div");
-	const dom = {root: root};
+	root.className = "diagnostics_entry";
 
-	if(is_log){
-		root.className = "diagnostics_log_entry";
+	const key = document.createElement("span");
+	key.className = "diagnostics_key";
 
-		dom.location = document.createElement("div");
-		dom.location.className = "diagnostics_location";
+	const value = document.createElement("span");
+	value.className = "diagnostics_value";
 
-		dom.lines = document.createElement("div");
-		dom.rows = [];
-
-		root.appendChild(dom.location);
-		root.appendChild(dom.lines);
-	}else{
-		root.className = "diagnostics_entry";
-
-		dom.key = document.createElement("span");
-		dom.key.className = "diagnostics_key";
-
-		dom.value = document.createElement("span");
-		dom.value.className = "diagnostics_value";
-
-		root.appendChild(dom.key);
-		root.appendChild(dom.value);
-	}
-
+	root.appendChild(key);
+	root.appendChild(value);
 	group.dom.body.appendChild(root);
 
-	return dom;
+	return {
+		root: root,
+		key: key,
+		value: value
+	};
+}
+
+function updateLogRow(item){
+	const dom = item.dom;
+
+	dom.location.textContent = item.location;
+	dom.location.style.color = getLevelInfo(item.level).bright;
+	dom.dup.textContent = item.count > 1 ? item.count + "×" : "";
+	dom.text.textContent = item.text;
 }
 
 function updateEntry(entry){
-	const dom = entry.dom;
-
-	if(!is_log){
-		dom.key.textContent = entry.key;
-		dom.value.textContent = entry.value;
-		return;
-	}
-
-	dom.location.textContent = entry.key;
-	dom.location.style.color = getLevelInfo(entry.level).bright;
-
-	for(let i = 0; i < entry.history.length; i++){
-		const row = dom.rows[i] ?? buildLine(dom);
-		const item = entry.history[i];
-
-		row.dup.textContent = item.count > 1 ? item.count + "×" : "";
-		row.text.textContent = item.text;
-		row.root.style.display = "";
-	}
-
-	for(let i = entry.history.length; i < dom.rows.length; i++)
-		dom.rows[i].root.style.display = "none";
+	entry.dom.key.textContent = entry.key;
+	entry.dom.value.textContent = entry.value;
 }
 
 function updateAges(){
@@ -378,10 +408,6 @@ function updateAges(){
 
 function compareByName(a, b){
 	return a.key.localeCompare(b.key);
-}
-
-function compareByRecent(a, b){
-	return (b.last_seen - a.last_seen) || a.key.localeCompare(b.key);
 }
 
 function reorder(container, list){
@@ -396,7 +422,7 @@ function reorder(container, list){
 function render(){
 	const min_rank = parseInt(severitybox.value) || 0;
 	const solo = groups.size == 1;
-	const sorted = Array.from(groups.values()).sort(compareByName);
+	const list = is_log ? Array.from(groups.values()) : Array.from(groups.values()).sort(compareByName);
 
 	let visible = 0;
 	let total = 0;
@@ -405,7 +431,7 @@ function render(){
 
 	timers = [];
 
-	for(const group of sorted){
+	for(const group of list){
 		total += group.count;
 
 		if(group.dom === undefined)
@@ -442,9 +468,24 @@ function render(){
 		if(!dom.root.open)
 			continue;
 
-		const entries = Array.from(group.entries.values()).sort(is_log ? compareByRecent : compareByName);
+		if(is_log){
+			for(const item of group.history){
+				if(item.dom === undefined)
+					item.dom = buildLogRow(group);
 
-		for(const entry of entries){
+				const item_shown = item.rank >= min_rank;
+				item.dom.root.style.display = item_shown ? "" : "none";
+
+				if(!item_shown)
+					continue;
+
+				updateLogRow(item);
+			}
+
+			continue;
+		}
+
+		for(const entry of group.entries.values()){
 			if(entry.dom === undefined)
 				entry.dom = buildEntry(group);
 
@@ -456,11 +497,10 @@ function render(){
 
 			updateEntry(entry);
 		}
-
-		reorder(dom.body, entries);
 	}
 
-	reorder(listdiv, sorted);
+	if(!is_log)
+		reorder(listdiv, list);
 
 	placeholder.textContent = groups.size == 0 ? "Waiting for data..." : "Nothing matches the current severity.";
 	placeholder.style.display = visible > 0 ? "none" : "";
