@@ -33,6 +33,8 @@ let enuToScreenMat = undefined;
 let last_fix_key = undefined;
 let update_throttle = undefined;
 
+let default_fixed_point = "map,0.0,0.0,0.0";
+
 const selectionbox = document.getElementById("{uniqueID}_topic");
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
 
@@ -47,9 +49,17 @@ const text_lon = document.getElementById("{uniqueID}_longitude");
 const text_alt = document.getElementById("{uniqueID}_altitude");
 const text_cov = document.getElementById("{uniqueID}_covariance");
 const text_frame = document.getElementById("{uniqueID}_frame");
+const fixedPointInput = document.getElementById("{uniqueID}_fixed_point");
+const setFixedPointButton = document.getElementById("{uniqueID}_set_fixed_point");
 
 const placeholder = new Image();
 placeholder.src = "assets/tile_loading.png";
+
+
+function fixedPointHasValidData(input){
+	return input.trim() != "" && input.trim() != default_fixed_point;
+}
+
 
 function setOpacityText(val){
 	if(val == 0.0)
@@ -126,6 +136,7 @@ if(settings.hasOwnProperty("{uniqueID}")){
 		copyright = "";
 
 	tileServerString.value = server_url;
+	fixedPointInput.value = loaded_data.fixed_point;
 
 	smoothingCheckbox.checked = loaded_data.smoothing;
 	ignoreRotationCheckbox.checked = loaded_data.ignore_rotation ?? false;
@@ -139,6 +150,7 @@ if(settings.hasOwnProperty("{uniqueID}")){
 function saveSettings(){
 	settings["{uniqueID}"] = {
 		topic: topic,
+		fixed_point: fixedPointInput.value,
 		server_url: server_url,
 		opacity: opacitySlider.value,
 		smoothing: smoothingCheckbox.checked,
@@ -462,10 +474,12 @@ let connect_retry = 0;
 //Topic
 function connect(){
 
-	if(topic == ""){
+	if(topic == "" && !fixedPointHasValidData(fixedPointInput.value)){
 		status.setError("Empty topic.");
-		return;
 	}
+	if (topic == "")
+		return
+
 
 	if(map_topic !== undefined){
 		map_topic.unsubscribe(listener);
@@ -486,7 +500,7 @@ function connect(){
 
 	last_fix_key = undefined;
 	update_throttle = new Date("2010-3-2");
-	
+
 	listener = map_topic.subscribe((msg) => {
 
 		if(new Date() - update_throttle < 4000 || opacitySlider.value == 0.0) //reduces jitter and CPU load in raw receiver mode
@@ -530,7 +544,7 @@ function connect(){
 
 		connect_retry = 0;
 		msg.frame = frame;
-		
+
 		map_fix = msg;
 
 		// Only rebuild the ENU origin and tile state if the actual fix changed.
@@ -541,7 +555,7 @@ function connect(){
 			last_fix_key = fix_key;
 			updateFixData();
 		}
-		
+
 		drawTiles();
 	});
 
@@ -560,6 +574,15 @@ function updateFixData(){
 	fix_data = {
 		tilePos: Navsat.coordToTile(map_fix.longitude, map_fix.latitude, zoomLevel)
 	};
+}
+
+
+function initialize(){
+	loadTopics();
+	let fixed_point = fixedPointInput.value.trim();
+	if (fixed_point != "" && fixed_point != default_fixed_point) {
+		setFixedPointButton.click();
+	}
 }
 
 async function loadTopics(){
@@ -594,11 +617,75 @@ selectionbox.addEventListener("click", (event) => {
 	connect();
 });
 
-icon.addEventListener("click", (event) => {
-	loadTopics();
+
+setFixedPointButton.addEventListener("click", (event) => {
+	const input = fixedPointInput.value.trim();
+
+	if(!fixedPointHasValidData(input)){
+		status.setError("Fixed point input is empty.");
+		return;
+	}
+
+	const parts = input.split(",");
+	if(parts.length != 4){
+		status.setError("Fixed point input must be in the format: frame_id,latitude,longitude,altitude");
+		return;
+	}
+
+	const frame_id = parts[0].trim();
+	const lat = parseFloat(parts[1].trim());
+	const lon = parseFloat(parts[2].trim());
+	const alt = parseFloat(parts[3].trim());
+
+
+	if(isNaN(lat) || isNaN(lon) || isNaN(alt)){
+		status.setError("Latitude, longitude, and altitude must be valid numbers.");
+		return;
+	}
+
+	text_lat.innerText = "Latitude: " + lat.toFixed(8)+"°";
+	text_lon.innerText = "Longitude: " + lon.toFixed(8)+"°";
+	text_alt.innerText = "Altitude: " + alt.toFixed(2)+" m";
+
+	text_frame.innerText = "TF Frame: "+frame_id;
+
+	tf.fixed_frame = frame_id;
+	enu_origin = Navsat.buildEnuOrigin(lat, lon, alt);
+	fix_data = {
+		tilePos: Navsat.coordToTile(lon, lat, zoomLevel)
+	};
+
+	let header = {
+		frame_id: frame_id,
+		stamp: { sec: 0, nanosec: 0 }
+	};
+	let frame = tf.getAbsoluteTransform(header);
+	if(!frame){
+		status.setError("Required transform frame \""+frame_id+"\" not found.");
+		return;
+	}
+
+	map_fix = {
+		header: header,
+		frame: frame,
+		latitude: lat,
+		longitude: lon,
+		altitude: alt,
+		position_covariance: [0,0,0,0,0,0,0,0,0],
+		position_covariance_type: 0
+	};
+
+	status.setOK();
+	drawTiles();
+	saveSettings();
 });
 
-loadTopics();
+icon.addEventListener("click", (event) => {
+	initialize();
+});
+
+initialize();
+
 
 function resizeScreen(){
 	canvas.height = window.innerHeight;
@@ -648,6 +735,7 @@ document.getElementById("{uniqueID}_import_DB").addEventListener("click", (event
 
 	input.click();
 });
+
 
 resizeScreen();
 

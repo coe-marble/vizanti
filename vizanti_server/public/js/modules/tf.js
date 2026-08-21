@@ -214,6 +214,8 @@ export class TF {
 	}
 
 	getAbsoluteTransform(header) {
+		if (header.frame_id === this.fixed_frame)
+			return this.getZeroFrame();
 		const buf = this.absoluteTransformBuffers[header.frame_id];
 		if (!buf)
 			return this.absoluteTransforms[header.frame_id];

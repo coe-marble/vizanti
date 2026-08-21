@@ -4,14 +4,22 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
-		<label for="{uniqueID}_topic">Topic:</label>
+
+		<label for="{uniqueID}_fixed_point">Fixed Point:</label>
+		<div>
+			<input type="text" id="{uniqueID}_fixed_point" name="fixed_point" placeholder="frame_id,latitude,longitude,altitude" value="map,0.0,0.0,0.0">
+			<button id="{uniqueID}_set_fixed_point" class="export_button">Set</button>
+		</div>
+
+		<label for="{uniqueID}_topic">OR Select Topic:</label>
 		<select id="{uniqueID}_topic" name="topic">
 			<!-- add topics here-->
 		</select>
 
+
 		<div class="live_data_display">
 			<p id="{uniqueID}_latitude">Latitude: ?</p>
-			<p id="{uniqueID}_longitude">Longitude: ?</p> 
+			<p id="{uniqueID}_longitude">Longitude: ?</p>
 			<p id="{uniqueID}_altitude">Altitude: ?</p>
 			<p id="{uniqueID}_covariance">Ground Covariance: ?</p>
 			<p id="{uniqueID}_frame">TF Frame: ?</p>
@@ -21,7 +29,7 @@
 		<p>Renders a tile map around a point specified by a sensor_msgs/NavSatFix and its header frame.</p>
 
 		<p class="comment">Uses an ENU local tangent plane as specified by REP 103. The tiles are reprojected to match, which maintains alignment between geodetic coordinates and metric X,Y positions (it's basically a perpendicular globe at the given location). As the tangent plane increasingly diverges from the terrain with distance, Z offsets become larger and straight-line distances less useful. For best results, place the ENU origin near the operating area.</p>
-		
+
 		<hr class="dark_hr"/>
 		<div class="spacer"></div>
 
@@ -34,7 +42,7 @@
 			<option value="https://tiles.stadiamaps.com/tiles/outdoors/{z}/{x}/{y}.png">
 			<option value="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}"></option>
 			<option value="https://t1.openseamap.org/seamark/{z}/{x}/{y}.png"></option>
-		</datalist> 
+		</datalist>
 
 
 		<p class="comment">The tile server can be changed to anything that uses 256x256 sized tiles, the Web Mercator projection, and follows the same {x},{y},{z} convention. </p>

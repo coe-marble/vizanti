@@ -25,7 +25,7 @@ find_package(rosbridge_suite REQUIRED)
 install(DIRECTORY
   launch
   public
-  DESTINATION share/${PROJECT_NAME}/
+  DESTINATION share/${PROJECT_NAME}
 )
 
 install(PROGRAMS
