@@ -1,1 +1,9 @@
-<canvas id="{uniqueID}_canvas" style="pointer-events: none; z-index: -5;"></canvas>
+<canvas id="{uniqueID}_canvas" style="z-index: -5;"></canvas>
+<img id="{uniqueID}_map_pointer" class="map-pointer" src="assets/location_pin.svg"
+    style="display: none; position: absolute; z-index: 1000; width: 32px; height: 32px; pointer-events: none;">
+<div id="{uniqueID}_context_menu" class="context-menu">
+  <div class="menu-item" onclick="handleContextMenuAction(event, 'goto_point')">GoTo Point</div>
+  <!-- <hr class="menu-divider"> -->
+  <!-- <div class="menu-item delete" onclick="handleContextMenuAction('delete')">Delete</div> -->
+</div>
+

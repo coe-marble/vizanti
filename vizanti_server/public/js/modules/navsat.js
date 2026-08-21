@@ -24,7 +24,7 @@ async function dataToImage(data){
 
 export async function exportDatabase(filename) {
     const allData = [];
-    
+
     async function dumpData() {
         const keylist = await db.getAllKeys();
         await Promise.all(keylist.map(async (url) => {
@@ -35,11 +35,11 @@ export async function exportDatabase(filename) {
             });
         }));
     }
-    
+
     await dumpData();
-  
+
     const dataBlob = new Blob([JSON.stringify(allData)], {type: 'application/json'});
-    
+
     const url = URL.createObjectURL(dataBlob);
     const a = document.createElement('a');
     a.href = url;

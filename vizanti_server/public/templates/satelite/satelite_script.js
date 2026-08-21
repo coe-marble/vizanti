@@ -51,6 +51,8 @@ const text_cov = document.getElementById("{uniqueID}_covariance");
 const text_frame = document.getElementById("{uniqueID}_frame");
 const fixedPointInput = document.getElementById("{uniqueID}_fixed_point");
 const setFixedPointButton = document.getElementById("{uniqueID}_set_fixed_point");
+const contextMenu = document.getElementById("{uniqueID}_context_menu");
+const mapPointer = document.getElementById("{uniqueID}_map_pointer");
 
 const placeholder = new Image();
 placeholder.src = "assets/tile_loading.png";
@@ -576,6 +578,44 @@ function updateFixData(){
 	};
 }
 
+function handleGotoPoint(pointX, pointY) {
+	const rect = canvas.getBoundingClientRect();
+
+	// extract lat lon from screen coordinates
+	const screenPos = { x: pointX - rect.left, y: pointY - rect.top };
+	const enuPos = view.screenToFixed(screenPos);
+
+	const frame = map_fix.frame;
+	const d = {
+		x: enuPos.x - frame.translation.x,
+		y: enuPos.y - frame.translation.y,
+		z: -frame.translation.z
+	};
+
+	let local;
+	if(ignoreRotationCheckbox.checked){
+		local = d;
+	}else{
+		local = applyRotation(d, frame.rotation, true);
+	}
+
+	const lla = Navsat.enuGroundToLla(local.x, local.y, enu_origin);
+	console.log(`Goto Point: Latitude: ${lla.latitude.toFixed(8)}, Longitude: ${lla.longitude.toFixed(8)}`);
+}
+
+
+window.handleContextMenuAction = function(event, action) {
+	if(action == "goto_point"){
+		let pinX = mapPointer.offsetLeft + mapPointer.width / 2;
+		let pinY = mapPointer.offsetTop + mapPointer.height;
+		handleGotoPoint(pinX, pinY);
+	}
+
+	contextMenu.style.display = "none";
+	mapPointer.style.display = "none";
+
+}
+
 
 function initialize(){
 	loadTopics();
@@ -615,6 +655,30 @@ selectionbox.addEventListener("change", (event) => {
 
 selectionbox.addEventListener("click", (event) => {
 	connect();
+});
+
+
+canvas.addEventListener("contextmenu", (event) => {
+	event.preventDefault();
+	event.stopPropagation();
+	contextMenu.style.left = `${event.pageX+10}px`;
+    contextMenu.style.top = `${event.pageY+10}px`;
+	let w = mapPointer.style.width.replace("px", "");
+	let h = mapPointer.style.height.replace("px", "");
+	mapPointer.style.left = `${event.pageX-w/2}px`;
+	mapPointer.style.top = `${event.pageY-h}px`;
+    // Make the menu visible
+	mapPointer.style.display = "block";
+    contextMenu.style.display = "block";
+	view.setInputMovementEnabled(false);
+});
+
+
+canvas.addEventListener("click", (event) => {
+	// Hide the menu when clicking anywhere else
+	contextMenu.style.display = "none";
+	mapPointer.style.display = "none";
+	view.setInputMovementEnabled(true);
 });
 
 
