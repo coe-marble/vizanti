@@ -1,3 +1,4 @@
+
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let tfModule = await import(`${base_url}/js/modules/tf.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
@@ -15,6 +16,7 @@ let models = {};
 let categorizedModels = {};
 let thumbnailCache = {};
 
+
 // Since paths is now categorized, we need to handle it differently
 Object.keys(paths).forEach(category => {
 	categorizedModels[category] = [];
@@ -22,7 +24,7 @@ Object.keys(paths).forEach(category => {
 	paths[category].forEach(file => {
 		const name = file.split('.png')[0].split("_").join(" ").trim();
 		categorizedModels[category].push(name);
-		
+
 		if (!models[name]) {
 			models[name] = new Image();
 			models[name].category = category;
@@ -43,7 +45,8 @@ let status = new Status(
 const canvas = document.getElementById('{uniqueID}_canvas');
 const ctx = canvas.getContext('2d', { colorSpace: 'srgb' });
 
-const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
+const icon = document.getElementById("{uniqueID}_icon");
+const icon_img = icon.getElementsByTagName('img')[0];
 const frameSelector = document.getElementById("{uniqueID}_frame");
 const lengthSelector = document.getElementById("{uniqueID}_length");
 const galleryTabs = document.getElementById("{uniqueID}_gallery_tabs");
@@ -52,6 +55,8 @@ const gallery = document.getElementById('{uniqueID}_gallery');
 const offsetXSelector = document.getElementById("{uniqueID}_offset_x");
 const offsetYSelector = document.getElementById("{uniqueID}_offset_y");
 const offsetYawSelector = document.getElementById("{uniqueID}_offset_yaw");
+
+const robotName = document.getElementById("{uniqueID}_name");
 
 const opacitySlider = document.getElementById('{uniqueID}_opacity');
 const opacityValue = document.getElementById('{uniqueID}_opacity_value');
@@ -63,14 +68,27 @@ opacitySlider.addEventListener('input', () =>  {
 offsetXSelector.addEventListener('input', saveSettings);
 offsetYSelector.addEventListener('input', saveSettings);
 offsetYawSelector.addEventListener('input', saveSettings);
+robotName.addEventListener('input', saveSettings);
+lengthSelector.addEventListener('input', () => {
+	const value = parseFloat(lengthSelector.value);
+	if (!Number.isNaN(value)) {
+		length = value;
+		saveSettings();
+		drawRobot();
+	}
+});
 
 let frame = find_base_frame();
 let sprite = "4wd";
+let length = parseFloat(lengthSelector.value) || 1;
+let robotFocus = false;
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
 	frame = loaded_data.frame;
-	lengthSelector.value = loaded_data.length;
+	length = parseFloat(loaded_data.length) || length;
+	lengthSelector.value = length;
+	robotName.value = loaded_data.robotName ?? "";
 
 	offsetXSelector.value = loaded_data.offset_x ?? 0.0;
 	offsetYSelector.value = loaded_data.offset_y ?? 0.0;
@@ -89,8 +107,9 @@ function saveSettings(){
 	settings["{uniqueID}"] = {
 		frame: frame,
 		sprite: sprite,
+		robotName: robotName.value,
 		opacity: opacitySlider.value,
-		length: lengthSelector.value,
+			length: length,
 		offset_x: offsetXSelector.value,
 		offset_y: offsetYSelector.value,
 		offset_yaw: offsetYawSelector.value,
@@ -129,7 +148,8 @@ function find_base_frame(){
 async function drawRobot() {
 
 	const unit = view.getMapUnitsInPixels(1.0);
-	const length = lengthSelector.value * unit;
+	const minimumVisiblePixels = 50;
+	const renderedLength = Math.max(length, minimumVisiblePixels / unit) * unit;
 
     const wid = canvas.width;
     const hei = canvas.height;
@@ -141,6 +161,18 @@ async function drawRobot() {
 	const modelimg = models[sprite];
 
 	if(robotframe && modelimg){
+		if (isRobotFocused) {
+			const focusedCenter = {
+				x: robotframe.translation.x,
+				y: -robotframe.translation.y
+			};
+
+			if (view.center.x !== focusedCenter.x || view.center.y !== focusedCenter.y) {
+				view.center = focusedCenter;
+				settings.view.center = focusedCenter;
+				view.sendUpdateEvent();
+			}
+		}
 
 		const is_flipped = applyRotation({x: 0, y: 0, z: 1.0}, robotframe.rotation).z < 0;
 
@@ -165,9 +197,9 @@ async function drawRobot() {
 			ctx.filter = 'invert(1)';
 		else
 			ctx.filter = 'none';
-		
-		ctx.drawImage(modelimg, -length/2, -(length*ratio)/2, length, length*ratio);
-		
+
+		ctx.drawImage(modelimg, -renderedLength/2, -(renderedLength*ratio)/2, renderedLength, renderedLength*ratio);
+
 		status.setOK();
 	}else{
 		if(robotframe){
@@ -192,13 +224,13 @@ function buildThumbnailGallery() {
 		const ctx = canvas.getContext('2d');
 		ctx.clearRect(0, 0, size, size);
 		ctx.drawImage(
-			image, 
+			image,
 			(size - scaledWidth) / 2, //x
 			(size - scaledHeight) / 2, //y
-			scaledWidth, 
+			scaledWidth,
 			scaledHeight
 		);
-		
+
 		return canvas.toDataURL();
 	}
 
@@ -216,37 +248,37 @@ function buildThumbnailGallery() {
 		});
 
 		event.currentTarget.classList.add('selected');
-		
+
 		saveSettings();
 	}
 
     const activeTab = galleryTabs.querySelector('.active-tab');
     const category = activeTab.id.replace("{uniqueID}_","");
-    
+
     gallery.innerHTML = '';
     if (categorizedModels[category]) {
 
         categorizedModels[category].sort().forEach(modelName => {
             const model = models[modelName];
             if (!model) return;
-            
+
             // Generate or get cached thumbnail
             if (!thumbnailCache[modelName]) {
                 thumbnailCache[modelName] = generateThumbnail(model);
             }
-            
+
             // Create thumbnail element
             const thumbDiv = document.createElement('div');
             thumbDiv.className = 'thumbnail-item';
 
             if (sprite === modelName)
 				thumbDiv.classList.add('selected');
-            
+
             thumbDiv.innerHTML = `
                 <img src="${thumbnailCache[modelName]}" alt="${modelName}">
                 <span class="thumb-label">${modelName}</span>
             `;
-            
+
             thumbDiv.addEventListener('click', (event) => selectSprite(event, modelName));
             gallery.appendChild(thumbDiv);
         });
@@ -266,7 +298,7 @@ galleryTabs.addEventListener('click', (event) => {
 	if(event.target != null && event.target.classList.contains("tablinks")){
 		setActiveCategory(event.target);
 		drawRobot();
-	}	
+	}
 });
 
 function resizeScreen(){
@@ -313,16 +345,89 @@ frameSelector.addEventListener("change", (event) => {
 	saveSettings();
 });
 
-lengthSelector.addEventListener("input", saveSettings);
-
 frameSelector.addEventListener("click", setFrameList);
-icon.addEventListener("click", setFrameList);
 
 frameSelector.addEventListener("change", (event) =>{
 	frame = frameSelector.value;
 	drawRobot();
 	saveSettings();
 });
+
+
+
+let longPressTimer;
+let isLongPress = false;
+let isRobotFocused = false;
+icon.addEventListener("mousedown", startLongPress);
+icon.addEventListener("touchstart", startLongPress);
+
+icon.addEventListener("mouseup", cancelLongPress);
+icon.addEventListener("mouseleave", cancelLongPress);
+icon.addEventListener("touchend", cancelLongPress);
+icon.addEventListener("touchcancel", cancelLongPress);
+
+icon.addEventListener("click", (event) => {
+	if(!isLongPress)
+		setActive(!isRobotFocused);
+	else
+		isLongPress = false;
+});
+
+icon.addEventListener("contextmenu", (event) => {
+	event.preventDefault();
+});
+
+
+function endDrag(event){
+	setActive(false);
+}
+
+
+function addListeners(){
+	view_container.addEventListener('mouseup', endDrag);
+	view_container.addEventListener('touchend', endDrag);
+}
+
+function removeListeners(){
+	view_container.removeEventListener('mouseup', endDrag);
+	view_container.removeEventListener('touchend', endDrag);
+}
+
+
+
+function setActive(value){
+	isRobotFocused = value;
+
+	if(isRobotFocused){
+		addListeners();
+		drawRobot();
+		icon.style.backgroundColor = "rgba(255, 255, 255, 1.0)";
+		view_container.style.cursor = "pointer";
+	}else{
+		removeListeners();
+		drawRobot();
+		icon.style.backgroundColor = "rgba(124, 124, 124, 0.3)";
+		view_container.style.cursor = "";
+	}
+}
+
+
+function startLongPress(event) {
+	isLongPress = false;
+	longPressTimer = setTimeout(() => {
+		isLongPress = true;
+		openModal("{uniqueID}_modal");
+	}, 500);
+}
+
+function cancelLongPress(event) {
+	clearTimeout(longPressTimer);
+}
+
+
+function refresh_icon_label(uniqueID, icon) {
+	return robotName.value || "Robot";
+}
 
 resizeScreen();
 

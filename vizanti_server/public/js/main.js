@@ -19,7 +19,36 @@ function createScript(template, eid){
 	let script = document.createElement("script");
 	script.dataset.uniqueid = eid;
 	script.type = "module";
-	script.textContent = set_unique(template, eid);
+	script.textContent = `
+		(async () => {
+			const __vizanti_uniqueID = ${JSON.stringify(eid)};
+			const __vizanti_icon = document.getElementById(__vizanti_uniqueID + "_icon");
+			const __vizanti_modal = document.getElementById(__vizanti_uniqueID + "_modal");
+			const __vizanti_labelNode = __vizanti_icon && __vizanti_icon.querySelector(".icon-label");
+			const __vizanti_refreshLabel = () => {
+				if (!__vizanti_icon || !__vizanti_labelNode) return;
+				if (typeof refresh_icon_label === "function") {
+					const label = refresh_icon_label(__vizanti_uniqueID, __vizanti_icon);
+					if (label !== undefined && label !== null && label !== "") {
+						__vizanti_labelNode.textContent = String(label);
+					}
+				}
+			};
+
+			${set_unique(template, eid)}
+
+			if (__vizanti_icon) {
+				if (__vizanti_modal) {
+					const __vizanti_fields = __vizanti_modal.querySelectorAll("input, textarea, select");
+					for (const __field of __vizanti_fields) {
+						__field.addEventListener("input", __vizanti_refreshLabel);
+						__field.addEventListener("change", __vizanti_refreshLabel);
+					}
+				}
+				__vizanti_refreshLabel();
+			}
+		})();
+	`;
 	return script;
 }
 
@@ -72,7 +101,7 @@ function loadAll(){
 		const modal_container = document.getElementById("modal_container");
 		const view_container = document.getElementById("view_container");
 		const script_container = document.getElementById("script_container");
-	
+
 		window.addEventListener("add_widget", (event) => {
 			if(isNaN(uid)){
 				if(isNaN(settings.uid))
@@ -86,7 +115,7 @@ function loadAll(){
 			settings.navbar.push({ type: event.widget_type, id: eid, container_id: event.container_target });
 			settings.uid = uid;
 			settings.save();
-	
+
 			const icon_element = createElement(template.icon, eid);
 			icon_element.dataset.topic = event.widget_topic;
 
@@ -98,17 +127,17 @@ function loadAll(){
 
 			if (template.hasOwnProperty("view"))
 				view_container.appendChild(createElement(template.view, eid));
-	
+
 			if(template.hasOwnProperty("script"))
 				script_container.appendChild(createScript(template.script, eid));
 
 			window.dispatchEvent(new Event("icons_changed"));
 		});
-	
+
 		window.addEventListener("remove_widget", (event) => {
 			const uniqueID = event.uniqueID;
 			const elementIndex = settings.navbar.findIndex((item) => item.id === uniqueID);
-	
+
 			if (elementIndex !== -1) {
 				const elements = document.querySelectorAll(`[data-uniqueid="${uniqueID}"]`);
 				elements.forEach((element) => {
@@ -124,7 +153,7 @@ function loadAll(){
 		});
 
 		initializeNav();
-	});	
+	});
 }
 
 if (document.readyState !== 'loading') {

@@ -35,6 +35,10 @@ function openModal(id, widgetTargetID = "icon_container"){
 	widgetTarget = widgetTargetID;
 }
 
+function getIconLabel() {
+
+}
+
 function closeModal(id){
 	document.getElementById(id).style.display = "none";
 }

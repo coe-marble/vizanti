@@ -11,7 +11,7 @@
 				<button class="tablinks" id="{uniqueID}_air">Air</button>
 				<button class="tablinks" id="{uniqueID}_misc">Misc</button>
 			</div>
-			
+
 			<div class="thumbnail-gallery" id="{uniqueID}_gallery">
 				<!-- Thumbnails will be populated here -->
 			</div>
@@ -26,6 +26,9 @@
 		</select>
 
 		<div class="spacer"></div>
+
+		<label for="{uniqueID}_name">Robot Name:</label>
+		<input type="text" id="{uniqueID}_name" name="name" placeholder="robot_name" value="robot">
 
 		<label for="{uniqueID}_length">Robot Length (m):</label>
 		<input type="number" value="0.5" step="0.01" min="0.01" id="{uniqueID}_length">
@@ -51,6 +54,9 @@
 		<span id="{uniqueID}_opacity_value">1.0</span>
 		<input type="range" value="1.0" step="0.05" min="0.1" max="1.0" id="{uniqueID}_opacity">
 
+		<label for="{uniqueID}_focus_btn">Focus on robot:</label>
+		<button id="{uniqueID}_focus_btn" class="focus_button" onclick="focusOnRobot('{uniqueID}')">Focus</button>
+
 		<div class="spacer"></div>
 
 		<h4>Adding custom sprites</h4>
@@ -61,6 +67,6 @@
 
 		<button id="{uniqueID}_remove" class="delete_button" onclick="removeWidget('{uniqueID}')">Remove Widget</button>
 
-		
+
 	</div>
 </div>

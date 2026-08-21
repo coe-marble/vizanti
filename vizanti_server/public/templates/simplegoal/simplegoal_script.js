@@ -156,7 +156,7 @@ function addListeners(){
 
 	view_container.addEventListener('touchstart', startDrag);
 	view_container.addEventListener('touchmove', drag);
-	view_container.addEventListener('touchend', endDrag);	
+	view_container.addEventListener('touchend', endDrag);
 }
 
 function removeListeners(){
@@ -166,14 +166,14 @@ function removeListeners(){
 
 	view_container.removeEventListener('touchstart', startDrag);
 	view_container.removeEventListener('touchmove', drag);
-	view_container.removeEventListener('touchend', endDrag);	
+	view_container.removeEventListener('touchend', endDrag);
 }
 
 function setActive(value){
-	active = value;
-	view.setInputMovementEnabled(!active);
+	isRobotFocused = value;
+	view.setInputMovementEnabled(!isRobotFocused);
 
-	if(active){
+	if(isRobotFocused){
 		addListeners();
 		icon.style.backgroundColor = "rgba(255, 255, 255, 1.0)";
 		view_container.style.cursor = "pointer";
@@ -221,7 +221,7 @@ let isLongPress = false;
 
 icon.addEventListener("click", (event) =>{
 	if(!isLongPress)
-		setActive(!active);
+		setActive(!isRobotFocused);
 	else
 		isLongPress = false;
 });
