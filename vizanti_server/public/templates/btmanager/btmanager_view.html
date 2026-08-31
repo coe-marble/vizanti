@@ -5,6 +5,14 @@
 	.btmanager-resize { position: absolute; top: 0; bottom: 0; left: -6px; width: 12px; cursor: ew-resize; }
 	.btmanager-toolbar { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid #555; min-width: 0; }
 	.btmanager-toolbar button:disabled, .btmanager-actions button:disabled { opacity: 0.42; cursor: not-allowed; filter: grayscale(1); }
+	.btmanager-runtime-control { display: inline-grid; place-items: center; width: 30px; height: 30px; margin: 0; padding: 0; }
+	.btmanager-runtime-control svg { width: 15px; height: 15px; fill: currentColor; stroke: currentColor; stroke-width: 1.8; }
+	.btmanager-runtime-control.play { color: #83df90; }
+	.btmanager-runtime-control.debug { color: #f0c66f; }
+	.btmanager-runtime-control.stop { color: #f08a8a; }
+	.btmanager-runtime-control.active { box-shadow: inset 0 0 0 1px currentColor; background: #1b1b1b; }
+	.btmanager-runtime-control:disabled { opacity: 0.35; cursor: not-allowed; filter: grayscale(1); }
+	.btmanager-runtime-toolbar { position: absolute; top: 12px; left: 50%; z-index: 3; display: flex; gap: 6px; align-items: center; padding: 5px 8px; border: 1px solid rgba(150, 150, 150, 0.75); background: rgba(32, 32, 32, 0.88); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); transform: translateX(-50%); }
 	.btmanager-file-select { min-width: 160px; max-width: 320px; flex: 1; background: #171717; color: #eee; border: 1px solid #555; padding: 6px; }
 	.btmanager-toolbar-spacer { flex: 1; }
 	.btmanager-editor { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; min-width: 0; min-height: 0; overflow: hidden; padding: 8px; }
@@ -18,8 +26,13 @@
 	.btmanager-actions { display: flex; gap: 6px; align-items: center; }
 	.btmanager-graph { overflow: auto; background: #1b1b1b; border: 1px solid #555; padding: 8px; white-space: pre-wrap; font-family: 'Ubuntu Mono', monospace; }
 	.btmanager-tree-tab { height: 100%; min-height: 0; }
-	.btmanager-workspace { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 8px; height: 100%; min-height: 0; overflow: hidden; }
-	.btmanager-workspace.btmanager-components-hidden { grid-template-columns: 28px minmax(0, 1fr); }
+	.btmanager-workspace { --btmanager-components-width: 300px; display: grid; grid-template-columns: var(--btmanager-components-width) 10px minmax(0, 1fr); gap: 0; height: 100%; min-height: 0; overflow: hidden; }
+	.btmanager-workspace.btmanager-components-hidden { grid-template-columns: 28px 0 minmax(0, 1fr); }
+	.btmanager-components-resize { cursor: col-resize; position: relative; }
+	.btmanager-components-resize::after { content: ''; position: absolute; top: 20%; bottom: 20%; left: 4px; border-left: 1px solid #555; }
+	.btmanager-components-hidden .btmanager-components-resize { display: none; }
+	.btmanager-runtime-mode .btmanager-workspace { grid-template-columns: minmax(0, 1fr); }
+	.btmanager-runtime-mode .btmanager-node-library, .btmanager-runtime-mode .btmanager-components-resize, .btmanager-runtime-mode .btmanager-inspector { display: none; }
 	.btmanager-node-library { position: relative; display: flex; flex-direction: column; gap: 8px; min-height: 0; height: 100%; box-sizing: border-box; overflow: hidden; background: #1b1b1b; border: 1px solid #555; padding: 8px; }
 	.btmanager-inspector { position: absolute; top: 12px; right: 12px; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; width: 180px; max-height: 280px; min-height: 0; background: rgba(27, 27, 27, 0.84); border: 1px solid rgba(150, 150, 150, 0.75); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); padding: 8px; z-index: 1; }
 	.btmanager-library-header { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
@@ -52,6 +65,10 @@
 	.btmanager-tree-node rect { stroke: #b0b0b0; stroke-width: 1.5; rx: 7; }
 	.btmanager-tree-node:hover rect, .btmanager-tree-node.selected rect { stroke: #fff; stroke-width: 2.5; }
 	.btmanager-tree-node.replace-target rect { stroke: #78db88; stroke-width: 3; }
+	.btmanager-runtime-mode .btmanager-tree-node rect { fill: #4a4a4a !important; }
+	.btmanager-runtime-mode .btmanager-tree-node.runtime-running rect { fill: #b58a27 !important; }
+	.btmanager-runtime-mode .btmanager-tree-node.runtime-success rect { fill: #386b42 !important; }
+	.btmanager-runtime-mode .btmanager-tree-node.runtime-failure rect { fill: #8d3c3c !important; }
 	.btmanager-tree-node.read-only-node rect { stroke-dasharray: 5 3; }
 	.btmanager-tree-canvas.dragging-component .btmanager-tree-node { opacity: 0.35; }
 	.btmanager-tree-canvas.dragging-component .btmanager-tree-node.can-receive { opacity: 1; }
@@ -72,18 +89,19 @@
 	.btmanager-inspector-content dl { margin: 0; }
 	.btmanager-inspector-content dt { margin-top: 10px; color: #9cc8ff; }
 	.btmanager-inspector-content dd { margin: 3px 0 0; }
-	.btmanager-property-panel { position: absolute; bottom: 12px; left: 12px; z-index: 2; width: min(520px, calc(100% - 48px)); max-height: 180px; overflow: auto; background: rgba(27, 27, 27, 0.84); border: 1px solid rgba(150, 150, 150, 0.75); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); padding: 8px; }
+	.btmanager-property-panel { position: absolute; bottom: 12px; left: 12px; z-index: 2; width: min(520px, calc(100% - 48px)); max-height: 250px; overflow: auto; background: rgba(27, 27, 27, 0.84); border: 1px solid rgba(150, 150, 150, 0.75); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); padding: 8px; }
 	.btmanager-property-panel[hidden] { display: none; }
 	.btmanager-property-heading { margin: 0 0 8px; color: #ddd; font-size: 0.9rem; }
-	.btmanager-port { padding: 4px 0; border-bottom: 1px solid #333; font-family: 'Ubuntu Mono', monospace; }
-	.btmanager-port small { color: #aaa; }
 	.btmanager-attribute-list { display: flex; flex-direction: column; gap: 6px; }
 	.btmanager-attribute-row { display: grid; grid-template-columns: minmax(54px, 0.7fr) minmax(62px, 1fr) auto; gap: 4px; align-items: center; }
 	.btmanager-attribute-row input { min-width: 0; box-sizing: border-box; background: #171717; color: #eee; border: 1px solid #555; padding: 4px; font-family: 'Ubuntu Mono', monospace; }
 	.btmanager-attribute-remove { margin: 0; padding: 2px 5px; color: #ffb5b5; }
+	.btmanager-readonly-attributes { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 8px; margin: 0; font-family: 'Ubuntu Mono', monospace; }
+	.btmanager-readonly-attributes dt { color: #9cc8ff; }
+	.btmanager-readonly-attributes dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #ddd; }
 	.btmanager-inspector-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 	.btmanager-inspector-actions button { margin: 0; padding: 4px 6px; }
-	@media (max-width: 900px) { .btmanager-workspace { grid-template-columns: 200px minmax(0, 1fr); } .btmanager-workspace.btmanager-components-hidden { grid-template-columns: 28px minmax(0, 1fr); } }
+	@media (max-width: 900px) { .btmanager-workspace { --btmanager-components-width: min(300px, 38vw); } .btmanager-workspace.btmanager-components-hidden { grid-template-columns: 28px 0 minmax(0, 1fr); } }
 </style>
 <section id="{uniqueID}_panel" class="btmanager-panel noselect" hidden>
 	<div id="{uniqueID}_resize" class="btmanager-resize" title="Resize behavior tree panel"></div>
@@ -92,7 +110,7 @@
 		<select id="{uniqueID}_files" class="btmanager-file-select" aria-label="Behavior tree file" disabled><option>Configure an XML folder with a long press on the icon.</option></select>
 		<button id="{uniqueID}_open" title="Choose XML folder">Open…</button>
 		<button id="{uniqueID}_new" title="Create behavior tree file">New…</button>
-		<button id="{uniqueID}_new_subtree" title="Create local subtree" disabled>New SubTree…</button>
+		<button id="{uniqueID}_new_subtree" title="Create local subtree" disabled>SubTree…</button>
 		<button id="{uniqueID}_delete_file" title="Delete selected behavior tree file" disabled>Delete</button>
 		<span class="btmanager-toolbar-spacer"></span>
 		<button id="{uniqueID}_maximize" title="Maximize editor" aria-label="Maximize editor">⛶</button>
@@ -103,7 +121,8 @@
 		<div id="{uniqueID}_tree_tab" class="btmanager-tab-content btmanager-tree-tab" role="tabpanel">
 			<div class="btmanager-workspace">
 				<aside class="btmanager-node-library"><div class="btmanager-library-header"><h2 class="btmanager-library-heading">Components</h2><button id="{uniqueID}_components_toggle" class="btmanager-library-toggle" title="Hide components" aria-label="Hide components">‹</button></div><div class="btmanager-library-content"><input id="{uniqueID}_node_search" class="btmanager-node-search" type="search" placeholder="Search components..." aria-label="Search components" /><div id="{uniqueID}_node_list" class="btmanager-node-list"></div></div></aside>
-				<div class="btmanager-graph-panel"><div id="{uniqueID}_tree" class="btmanager-tree">Select an XML file to inspect its behavior tree.</div><aside class="btmanager-inspector"><h2 class="btmanager-inspector-heading">Inspector</h2><div id="{uniqueID}_inspector" class="btmanager-inspector-content">Select a component to inspect its ports.</div></aside><section id="{uniqueID}_properties" class="btmanager-property-panel" hidden><h2 class="btmanager-property-heading">Properties</h2><div id="{uniqueID}_property_content"></div></section></div>
+				<div id="{uniqueID}_components_resize" class="btmanager-components-resize" title="Resize components panel"></div>
+				<div class="btmanager-graph-panel"><div class="btmanager-runtime-toolbar"><button id="{uniqueID}_play" class="btmanager-runtime-control play" title="Run behavior tree" aria-label="Run behavior tree"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg></button><button id="{uniqueID}_debug" class="btmanager-runtime-control debug" title="Debug behavior tree" aria-label="Debug behavior tree"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" d="M5 6.5h6v6H5zM8 2v2M3 4.5l1.5 1M13 4.5l-1.5 1M3 8h1M12 8h1M3 12l1.5-1M13 12l-1.5-1"/><circle cx="6.7" cy="9.2" r=".7"/><circle cx="9.3" cy="9.2" r=".7"/></svg></button><button id="{uniqueID}_stop" class="btmanager-runtime-control stop" title="Stop behavior tree" aria-label="Stop behavior tree" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9"/></svg></button></div><div id="{uniqueID}_tree" class="btmanager-tree">Select an XML file to inspect its behavior tree.</div><aside class="btmanager-inspector"><h2 class="btmanager-inspector-heading">Inspector</h2><div id="{uniqueID}_inspector" class="btmanager-inspector-content">Select a component to inspect its tree structure.</div></aside><section id="{uniqueID}_properties" class="btmanager-property-panel" hidden><h2 class="btmanager-property-heading">Attributes</h2><div id="{uniqueID}_property_content"></div></section></div>
 			</div>
 		</div>
 		<div class="btmanager-actions"><button id="{uniqueID}_undo" disabled>Undo</button><button id="{uniqueID}_redo" disabled>Redo</button><button id="{uniqueID}_save" disabled>Save</button><button id="{uniqueID}_validate" disabled>Validate</button><span id="{uniqueID}_save_status" aria-live="polite"></span></div>

@@ -1,0 +1,284 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "name": "PipelineSequence",
+      "kind": "Control",
+      "children": {
+        "mode": "list"
+      }
+    },
+    {
+      "name": "RecoveryNode",
+      "kind": "Control",
+      "children": {
+        "mode": "fixed",
+        "slots": 2
+      }
+    },
+    {
+      "name": "RoundRobin",
+      "kind": "Control",
+      "children": {
+        "mode": "list"
+      }
+    },
+    {
+      "name": "PauseResumeController",
+      "kind": "Control",
+      "children": {
+        "mode": "list"
+      }
+    },
+    {
+      "name": "RateController",
+      "kind": "Decorator",
+      "children": {
+        "mode": "fixed",
+        "slots": 1
+      }
+    },
+    {
+      "name": "DistanceController",
+      "kind": "Decorator",
+      "children": {
+        "mode": "fixed",
+        "slots": 1
+      }
+    },
+    {
+      "name": "SpeedController",
+      "kind": "Decorator",
+      "children": {
+        "mode": "fixed",
+        "slots": 1
+      }
+    },
+    {
+      "name": "GoalUpdatedController",
+      "kind": "Decorator",
+      "children": {
+        "mode": "fixed",
+        "slots": 1
+      }
+    },
+    {
+      "name": "SingleTrigger",
+      "kind": "Decorator",
+      "children": {
+        "mode": "fixed",
+        "slots": 1
+      }
+    },
+    {
+      "name": "GoalReached",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "GoalUpdated",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "GlobalUpdatedGoal",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "IsPathValid",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "IsGoalNearby",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "InitialPoseReceived",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "TimeExpired",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "DistanceTraveled",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "IsStuck",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ValidatePath",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "WouldAPlannerRecoveryHelp",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "WouldAControllerRecoveryHelp",
+      "kind": "Condition",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ComputePathToPose",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ComputePathThroughPoses",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "FollowPath",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "BackUp",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "Spin",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ClearEntireCostmap",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ClearCostmapAroundRobot",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ClearCostmapExceptRegion",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ReinitializeGlobalLocalization",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "TruncatePath",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "TruncatePathLocal",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "SmoothPath",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "RemovePassedGoals",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "PlannerSelector",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ControllerSelector",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "GoalCheckerSelector",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "ProgressCheckerSelector",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    },
+    {
+      "name": "PathHandlerSelector",
+      "kind": "Action",
+      "children": {
+        "mode": "none"
+      }
+    }
+  ]
+}

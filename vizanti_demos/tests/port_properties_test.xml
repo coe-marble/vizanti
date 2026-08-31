@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" main_tree_to_execute="PortPropertiesTest">
+  <TreeNodesModel>
+    <Action ID="MoveTo">
+      <input_port name="target">map</input_port>
+      <output_port name="result"/>
+      <inout_port name="speed">0.5</inout_port>
+    </Action>
+  </TreeNodesModel>
+  <BehaviorTree ID="PortPropertiesTest">
+    <Sequence name="port_demo">
+      <MoveTo target="{goal_pose}" speed="1.0" debug="true"/>
+    </Sequence>
+  </BehaviorTree>
+</root>

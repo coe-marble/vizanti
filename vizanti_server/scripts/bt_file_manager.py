@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import tempfile
 import xml.etree.ElementTree as ElementTree
@@ -196,8 +197,19 @@ class BtFileManager:
             return jsonify(valid=False, error=error), 422
         return jsonify(valid=True)
 
+    def get_catalog(self, catalog_path):
+        try:
+            catalog = json.loads(Path(catalog_path).read_text(encoding='utf-8'))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            return jsonify(error=f'Unable to load the bundled node catalog: {error}'), 500
+        if not isinstance(catalog, dict) or not isinstance(catalog.get('nodes'), list):
+            return jsonify(error='The bundled node catalog has an invalid format.'), 500
+        return jsonify(catalog)
+
 
 def register_routes(app, base_url, bt_file_manager):
+    catalog_path = Path(app.static_folder) / 'templates' / 'btmanager' / 'nav2_catalog.json'
+    app.add_url_rule(base_url + '/bt/catalog', 'get_bt_catalog', lambda: bt_file_manager.get_catalog(catalog_path))
     app.add_url_rule(base_url + '/bt/configure', 'configure_bt_root', bt_file_manager.configure_root, methods=['POST'])
     app.add_url_rule(base_url + '/bt/files', 'list_bt_files', bt_file_manager.list_files)
     app.add_url_rule(base_url + '/bt/file/<path:relative_path>', 'get_bt_file', bt_file_manager.get_file)

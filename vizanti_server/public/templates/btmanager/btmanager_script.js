@@ -16,6 +16,9 @@ const openButton = document.getElementById('{uniqueID}_open');
 const newButton = document.getElementById('{uniqueID}_new');
 const newSubtreeButton = document.getElementById('{uniqueID}_new_subtree');
 const deleteFileButton = document.getElementById('{uniqueID}_delete_file');
+const playButton = document.getElementById('{uniqueID}_play');
+const debugButton = document.getElementById('{uniqueID}_debug');
+const stopButton = document.getElementById('{uniqueID}_stop');
 const createModal = document.getElementById('{uniqueID}_create_modal');
 const createTitle = document.getElementById('{uniqueID}_create_title');
 const createStatus = document.getElementById('{uniqueID}_create_status');
@@ -49,6 +52,7 @@ const inspector = document.getElementById('{uniqueID}_inspector');
 const propertyPanel = document.getElementById('{uniqueID}_properties');
 const propertyContent = document.getElementById('{uniqueID}_property_content');
 const componentsToggle = document.getElementById('{uniqueID}_components_toggle');
+const componentsResize = document.getElementById('{uniqueID}_components_resize');
 
 const defaultNodeCatalog = [
     { name: 'Sequence', kind: 'Control', tags: ['control', 'and', 'series'] },
@@ -83,6 +87,7 @@ const defaultNodeCatalog = [
     { name: 'SubTree', kind: 'SubTree', group: 'SubTrees', tags: ['subtree', 'tree', 'reuse'] },
 ];
 let nodeCatalog = defaultNodeCatalog.map(node => ({ ...node, source: 'Built-in', ports: [] }));
+let bundledNodeCatalog = [];
 
 let rootPath = '';
 let selectedPath = '';
@@ -90,6 +95,10 @@ let revision = '';
 let savedContent = '';
 let maximized = false;
 let componentsHidden = false;
+let componentsWidth = 0;
+let runtimeMode = '';
+let inspectedNode = null;
+let inspectedElement = null;
 let longPressTimer;
 let isLongPress = false;
 const expandedSubtrees = new Set();
@@ -104,12 +113,23 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 	panel.style.width = settings['{uniqueID}'].panel_width ?? '';
 	maximized = settings['{uniqueID}'].maximized ?? false;
 	componentsHidden = settings['{uniqueID}'].components_hidden ?? false;
+	componentsWidth = settings['{uniqueID}'].components_width ?? 0;
 }
 rootInput.value = rootPath;
 
 function saveSettings() {
-	settings['{uniqueID}'] = { root_path: rootPath, panel_width: panel.style.width, maximized, components_hidden: componentsHidden };
+	settings['{uniqueID}'] = { root_path: rootPath, panel_width: panel.style.width, maximized, components_hidden: componentsHidden, components_width: componentsWidth };
 	settings.save();
+}
+
+async function loadBundledNodeCatalog() {
+	try {
+		const catalog = await request('/bt/catalog');
+		if (!Array.isArray(catalog.nodes)) throw new Error('Bundled Nav2 catalog has an invalid format.');
+		bundledNodeCatalog = catalog.nodes.filter(node => typeof node.name === 'string' && typeof node.kind === 'string');
+	} catch (error) {
+		console.warn('BT Manager Nav2 catalog unavailable:', error.message);
+	}
 }
 
 function setMaximized(value) {
@@ -128,6 +148,60 @@ function setComponentsHidden(value) {
 	componentsToggle.setAttribute('aria-label', componentsToggle.title);
 }
 
+function updateRuntimeControls() {
+	const active = Boolean(runtimeMode);
+	playButton.disabled = active || !selectedPath;
+	debugButton.disabled = active || !selectedPath;
+	stopButton.disabled = !active;
+	newButton.disabled = active;
+	openButton.disabled = active;
+	fileList.disabled = active || !rootPath;
+	playButton.classList.toggle('active', runtimeMode === 'play');
+	debugButton.classList.toggle('active', runtimeMode === 'debug');
+	editor.disabled = active || !selectedPath;
+	saveButton.disabled = active || !selectedPath;
+	validateButton.disabled = active || !selectedPath;
+}
+
+function setRuntimeMode(mode) {
+	runtimeMode = mode;
+	panel.classList.toggle('btmanager-runtime-mode', Boolean(runtimeMode));
+	updateTitle();
+	updateSubtreeAction();
+	updateRuntimeControls();
+	if (selectedPath && editor.value) {
+		try {
+			renderGraph(editor.value);
+		} catch (error) {
+			graph.textContent = error.message;
+		}
+	}
+	if (inspectedNode) renderInspector(inspectedNode, inspectedElement);
+}
+
+function setComponentsWidth(width) {
+	const minimum = 220;
+	const available = workspace.clientWidth;
+	const maximum = available > 0 ? Math.max(minimum, available - 280) : Math.max(minimum, width);
+	componentsWidth = Math.max(minimum, Math.min(maximum, Math.round(width)));
+	workspace.style.setProperty('--btmanager-components-width', `${componentsWidth}px`);
+}
+
+function initializeComponentsWidth() {
+	if (componentsWidth > 0) {
+		setComponentsWidth(componentsWidth);
+		return;
+	}
+	const context = document.createElement('canvas').getContext('2d');
+	if (!context) {
+		setComponentsWidth(300);
+		return;
+	}
+	context.font = getComputedStyle(nodeList).font;
+	const widestEntry = Math.max(0, ...nodeCatalog.map(node => context.measureText(node.name).width + context.measureText(node.source || '').width + 54));
+	setComponentsWidth(Math.max(300, widestEntry));
+}
+
 function syncPanelTop() {
 	panel.style.top = `${iconBar.offsetHeight}px`;
 }
@@ -135,29 +209,30 @@ function syncPanelTop() {
 function updateTitle() {
 	const fileName = selectedPath ? `: ${selectedPath}` : '';
 	const unsavedMarker = selectedPath && editor.value !== savedContent ? ' *' : '';
-	title.textContent = `Behavior Trees${fileName}${unsavedMarker}`;
+	const modeMarker = runtimeMode ? ` — ${runtimeMode === 'debug' ? 'Debug' : 'Runtime'}` : '';
+	title.textContent = `Behavior Trees${fileName}${unsavedMarker}${modeMarker}`;
 }
 
 function updateSubtreeAction() {
-	newSubtreeButton.disabled = !selectedPath;
-	deleteFileButton.disabled = !selectedPath;
+	newSubtreeButton.disabled = !selectedPath || Boolean(runtimeMode);
+	deleteFileButton.disabled = !selectedPath || Boolean(runtimeMode);
 }
 
 function clearSelectedFile() {
+	runtimeMode = '';
+	panel.classList.remove('btmanager-runtime-mode');
 	selectedPath = '';
 	revision = '';
 	savedContent = '';
 	includedSubtrees = [];
 	includedTreeDefinitions.clear();
 	editor.value = '';
-	editor.disabled = true;
-	saveButton.disabled = true;
-	validateButton.disabled = true;
 	renderInspector(null);
 	graph.textContent = 'Select an XML file to inspect its behavior tree.';
 	tree.textContent = 'Select an XML file to inspect its behavior tree.';
 	updateTitle();
 	updateSubtreeAction();
+	updateRuntimeControls();
 }
 
 function showCreateDialog(mode) {
@@ -338,6 +413,7 @@ function renderTreeCanvas(documentRoot) {
 	const nodeElements = new Map();
 	const edgeElements = [];
 	const nodeType = node => nodeCatalog.find(component => component.name === node.element.tagName)?.kind || 'Action';
+	const runtimeStateFor = node => runtimeMode && node.parent === null ? 'Running' : 'Idle';
 	const nodeColor = type => ({ Control: '#245b8f', Decorator: '#68458a', Action: '#386b42', Condition: '#8b7131', SubTree: '#276c72' }[type] || '#4b4b4b');
 	const updateGeometry = () => {
 		edgeElements.forEach(({ edge, parent, child }) => {
@@ -360,13 +436,22 @@ function renderTreeCanvas(documentRoot) {
 			readOnly: node.readOnly,
 			sourcePath: node.sourcePath,
 			source: node.readOnly || node.sourcePath ? 'Include' : component?.source || 'XML',
+			structure: describeTreeStructure(node),
 		}, node.element);
 		svg.focus({ preventScroll: true });
 	};
+	const childPolicyFor = node => {
+		const component = nodeCatalog.find(candidate => candidate.name === node.element.tagName);
+		if (component?.children) return component.children;
+		const type = nodeType(node);
+		if (type === 'Control') return { mode: 'list' };
+		if (type === 'Decorator') return { mode: 'fixed', slots: 1 };
+		return { mode: 'none' };
+	};
 	const canAcceptChild = node => {
 		if (node.readOnly) return false;
-		const type = nodeType(node);
-		return type === 'Control' || (type === 'Decorator' && node.children.length === 0);
+		const policy = childPolicyFor(node);
+		return policy.mode === 'list' || (policy.mode === 'fixed' && node.children.length < policy.slots);
 	};
 	const canReplace = node => !node.readOnly && allNodes.length === 1 && node.parent === null;
 	const createComponentElement = (xmlDocument, component) => {
@@ -394,7 +479,7 @@ function renderTreeCanvas(documentRoot) {
 	};
 	const addComponent = (parent, component, childIndex = parent.children.length) => {
 		if (!canAcceptChild(parent)) {
-			status.setError('Drop onto a Control node or an empty Decorator.');
+			status.setError('Drop onto a node with an available child slot.');
 			return;
 		}
 		try {
@@ -426,6 +511,10 @@ function renderTreeCanvas(documentRoot) {
 		if (event.key !== 'Delete' || !selectedTreeNode) return;
 		event.preventDefault();
 		event.stopPropagation();
+		if (runtimeMode) {
+			status.setError('Stop runtime before editing the behavior tree.');
+			return;
+		}
 		if (selectedTreeNode.readOnly) {
 			status.setError('Included subtree definitions are read-only. Open their source file to edit them.');
 			return;
@@ -454,7 +543,8 @@ function renderTreeCanvas(documentRoot) {
 		edgeElements.push({ edge, parent, child });
 	}));
 	allNodes.filter(canAcceptChild).forEach(parent => {
-		const isList = nodeType(parent) === 'Control';
+		const policy = childPolicyFor(parent);
+		const isList = policy.mode === 'list';
 		const childCenters = parent.children.map(child => child.x + 90);
 		const slotCenters = !isList ? [parent.x + 90] : childCenters.length === 0 ? [parent.x + 90] : [
 			childCenters[0] - 110,
@@ -475,7 +565,7 @@ function renderTreeCanvas(documentRoot) {
 			const label = document.createElementNS(svgNamespace, 'text');
 			label.setAttribute('x', String(centerX - 5));
 			label.setAttribute('y', String(slotY + 16));
-			label.textContent = isList ? '+' : String(childIndex + 1);
+			label.textContent = isList ? '+' : String(parent.children.length + 1);
 			slot.append(rectangle, label);
 			slot.addEventListener('dragover', event => {
 				if (!event.dataTransfer.types.includes('application/x-btmanager-component')) return;
@@ -498,6 +588,7 @@ function renderTreeCanvas(documentRoot) {
 	allNodes.forEach(node => {
 		const group = document.createElementNS(svgNamespace, 'g');
 		group.classList.add('btmanager-tree-node');
+		if (runtimeMode) group.classList.add(`runtime-${runtimeStateFor(node).toLowerCase()}`);
 		if (canAcceptChild(node)) group.classList.add('can-receive');
 		if (node.parent === null) group.classList.add('root-node');
 		if (node.readOnly) group.classList.add('read-only-node');
@@ -508,12 +599,14 @@ function renderTreeCanvas(documentRoot) {
 		const label = document.createElementNS(svgNamespace, 'text');
 		label.setAttribute('x', '12');
 		label.setAttribute('y', '27');
-		label.textContent = node.element.tagName;
+		const nodeName = node.element.getAttribute('name');
+		label.textContent = nodeName || node.element.tagName;
 		const type = document.createElementNS(svgNamespace, 'text');
 		type.classList.add('btmanager-tree-node-type');
 		type.setAttribute('x', '12');
 		type.setAttribute('y', '46');
-		type.textContent = nodeType(node);
+		const typeLabel = nodeName ? `${node.element.tagName} · ${nodeType(node)}` : nodeType(node);
+		type.textContent = runtimeMode ? `${typeLabel} · ${runtimeStateFor(node)}` : typeLabel;
 		group.append(rectangle, label, type);
 		if (canReplace(node)) {
 			group.addEventListener('dragover', event => {
@@ -577,6 +670,12 @@ function renderNodeCatalog(documentRoot) {
 			catalog.push(node);
 		}
 	};
+	bundledNodeCatalog.forEach(node => addNode({
+		...node,
+		tags: node.tags || [node.kind.toLowerCase(), 'nav2', node.name.toLowerCase()],
+		source: 'Nav2',
+		ports: [],
+	}));
 
 	documentRoot.querySelectorAll('TreeNodesModel > *').forEach(model => {
 		const kind = model.tagName;
@@ -608,13 +707,66 @@ function renderNodeCatalog(documentRoot) {
 	renderNodePalette();
 }
 
+function describeTreeStructure(node) {
+	const component = nodeCatalog.find(candidate => candidate.name === node.element.tagName);
+	return describeComponentStructure(component?.kind || 'Action', node.children.length, component?.children);
+}
+
+function describeComponentStructure(type, childCount = null, childPolicy = null) {
+	if (childPolicy?.mode === 'fixed') {
+		const slots = Number.isInteger(childPolicy.slots) && childPolicy.slots > 0 ? childPolicy.slots : 1;
+		return {
+			children: childCount === null ? `${slots} slots` : `${childCount} / ${slots} slots`,
+			accepts: 'Any node',
+			placement: 'Control, Decorator, root',
+		};
+	}
+	if (childPolicy?.mode === 'list') {
+		return {
+			children: childCount === null ? 'List' : `List (${childCount})`,
+			accepts: 'Any node',
+			placement: 'Control, Decorator, root',
+		};
+	}
+	if (type === 'Control') {
+		return {
+			children: childCount === null ? 'List' : `List (${childCount})`,
+			accepts: 'Any node',
+			placement: 'Control, Decorator, root',
+		};
+	}
+	if (type === 'Decorator') {
+		return {
+			children: childCount === null ? '1 slot' : `${childCount} / 1 slot`,
+			accepts: 'Any node',
+			placement: 'Control, Decorator, root',
+		};
+	}
+	if (type === 'SubTree') {
+		return {
+			children: 'Subtree reference',
+			accepts: '—',
+			placement: 'Control, Decorator, root',
+		};
+	}
+	return {
+		children: 'Leaf',
+		accepts: '—',
+		placement: 'Control, Decorator, root',
+	};
+}
+
 function renderInspector(node, element = null) {
 	if (!node) {
-		inspector.textContent = 'Select a component to inspect its ports.';
+		inspectedNode = null;
+		inspectedElement = null;
+		inspector.textContent = 'Select a component to inspect its tree structure.';
 		propertyPanel.hidden = true;
 		propertyContent.replaceChildren();
 		return;
 	}
+	inspectedNode = node;
+	inspectedElement = element;
 	const details = document.createElement('dl');
 	const appendDetail = (label, value) => {
 		const term = document.createElement('dt');
@@ -624,6 +776,7 @@ function renderInspector(node, element = null) {
 		details.append(term, description);
 	};
 	appendDetail('Component', node.name);
+	if (element?.getAttribute('name')) appendDetail('Name', element.getAttribute('name'));
 	appendDetail('Type', node.kind);
 	appendDetail('Source', node.source);
 	if (node.readOnly) appendDetail('Access', 'Read-only in this file');
@@ -638,24 +791,10 @@ function renderInspector(node, element = null) {
 		details.appendChild(sourceAction);
 	}
 	renderPropertyEditor(node, element);
-	const portsTitle = document.createElement('dt');
-	portsTitle.textContent = 'Ports';
-	details.appendChild(portsTitle);
-	const ports = document.createElement('dd');
-	if (node.ports.length === 0) {
-		ports.textContent = 'No declared ports.';
-	} else {
-		node.ports.forEach(port => {
-			const item = document.createElement('div');
-			item.className = 'btmanager-port';
-			item.textContent = `${port.name || '(unnamed)'} `;
-			const meta = document.createElement('small');
-			meta.textContent = `${port.direction}${port.defaultValue ? ` = ${port.defaultValue}` : ''}`;
-			item.appendChild(meta);
-			ports.appendChild(item);
-		});
-	}
-	details.appendChild(ports);
+	const structure = node.structure || describeComponentStructure(node.kind);
+	appendDetail('Children', structure.children);
+	appendDetail('Accepts', structure.accepts);
+	appendDetail('Placement', structure.placement);
 	inspector.replaceChildren(details);
 }
 
@@ -663,10 +802,24 @@ function renderPropertyEditor(node, element) {
 	propertyPanel.hidden = !element;
 	propertyContent.replaceChildren();
 	if (!element) return;
-	if (node.readOnly) {
+	if (node.readOnly || runtimeMode) {
 		const message = document.createElement('p');
-		message.textContent = 'This included subtree definition is read-only. Open its source file to edit attributes.';
-		propertyContent.appendChild(message);
+		message.textContent = runtimeMode ? 'Runtime attributes are read-only.' : 'This included subtree definition is read-only. Open its source file to edit attributes.';
+		const attributes = Array.from(element.attributes);
+		if (attributes.length === 0) {
+			propertyContent.appendChild(message);
+			return;
+		}
+		const details = document.createElement('dl');
+		details.className = 'btmanager-readonly-attributes';
+		attributes.forEach(attribute => {
+			const name = document.createElement('dt');
+			name.textContent = attribute.name;
+			const value = document.createElement('dd');
+			value.textContent = attribute.value;
+			details.append(name, value);
+		});
+		propertyContent.append(message, details);
 		return;
 	}
 	const list = document.createElement('div');
@@ -817,9 +970,14 @@ function renderNodePalette() {
 			nodeList.appendChild(section);
 		});
 	}
+	initializeComponentsWidth();
 }
 
 async function loadFile(path) {
+	if (runtimeMode) {
+		status.setError('Stop runtime before opening another behavior tree.');
+		return;
+	}
 	if (selectedPath && path !== selectedPath && editor.value !== savedContent) {
 		if (await confirm(`Save changes to ${selectedPath} before switching?`)) {
 			if (!await saveCurrentFile()) return;
@@ -839,9 +997,7 @@ async function loadFile(path) {
 		undoStack.length = 0;
 		redoStack.length = 0;
 		updateHistoryButtons();
-		editor.disabled = false;
-		saveButton.disabled = false;
-		validateButton.disabled = false;
+		updateRuntimeControls();
 		updateTitle();
 		renderGraph(data.content);
 		await loadIncludedSubtrees(data.path);
@@ -991,12 +1147,41 @@ async function saveCurrentFile() {
 		saveStatus.textContent = `Save failed: ${error.message}`;
 		return false;
 	} finally {
-		saveButton.disabled = false;
+		updateRuntimeControls();
+	}
+}
+
+async function startRuntime(mode) {
+	if (!selectedPath) {
+		status.setError('Select a behavior tree file before starting runtime.');
+		return;
+	}
+	if (editor.value !== savedContent) {
+		status.setError('Save the behavior tree before starting runtime.');
+		return;
+	}
+	try {
+		await request('/bt/validate', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ content: editor.value }),
+		});
+		renderGraph(editor.value);
+		setRuntimeMode(mode);
+		status.setOK(`${mode === 'debug' ? 'Debug' : 'Runtime'} view ready.`);
+	} catch (error) {
+		status.setError(`Cannot start runtime: ${error.message}`);
 	}
 }
 
 saveButton.addEventListener('click', async () => {
 	await saveCurrentFile();
+});
+playButton.addEventListener('click', () => startRuntime('play'));
+debugButton.addEventListener('click', () => startRuntime('debug'));
+stopButton.addEventListener('click', () => {
+	setRuntimeMode('');
+	status.setOK('Returned to Editor.');
 });
 
 undoButton.addEventListener('click', () => {
@@ -1097,6 +1282,21 @@ componentsToggle.addEventListener('click', () => {
 	setComponentsHidden(!componentsHidden);
 	saveSettings();
 });
+componentsResize.addEventListener('mousedown', event => {
+	if (componentsHidden) return;
+	event.preventDefault();
+	const workspaceBounds = workspace.getBoundingClientRect();
+	function resize(moveEvent) {
+		setComponentsWidth(moveEvent.clientX - workspaceBounds.left);
+	}
+	function stop() {
+		document.removeEventListener('mousemove', resize, true);
+		document.removeEventListener('mouseup', stop, true);
+		saveSettings();
+	}
+	document.addEventListener('mousemove', resize, true);
+	document.addEventListener('mouseup', stop, true);
+});
 
 ['mousedown', 'mousemove', 'touchstart', 'touchmove', 'dragstart'].forEach(eventName => {
 	panel.addEventListener(eventName, event => event.stopPropagation());
@@ -1153,8 +1353,10 @@ syncPanelTop();
 setMaximized(maximized);
 setComponentsHidden(componentsHidden);
 selectTab('tree');
-renderNodePalette();
+await loadBundledNodeCatalog();
+renderNodeCatalog(new DOMParser().parseFromString('<root/>', 'application/xml').documentElement);
 updateHistoryButtons();
 updateSubtreeAction();
+updateRuntimeControls();
 if (rootPath) loadFiles();
 console.log('BT Manager Widget Loaded {uniqueID}');
