@@ -1,0 +1,111 @@
+<style>
+	.btmanager-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(72vw, 1180px); min-width: 33.333vw; max-width: 94vw; display: grid; grid-template-rows: auto 1fr; background: #262626; border-left: 2px solid #757575; box-shadow: -4px 0 12px rgba(0, 0, 0, 0.35); z-index: 8; }
+	.btmanager-panel[hidden] { display: none; }
+	.btmanager-panel.btmanager-maximized { left: 0; width: auto !important; max-width: none; }
+	.btmanager-resize { position: absolute; top: 0; bottom: 0; left: -6px; width: 12px; cursor: ew-resize; }
+	.btmanager-toolbar { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid #555; min-width: 0; }
+	.btmanager-toolbar button:disabled, .btmanager-actions button:disabled { opacity: 0.42; cursor: not-allowed; filter: grayscale(1); }
+	.btmanager-file-select { min-width: 160px; max-width: 320px; flex: 1; background: #171717; color: #eee; border: 1px solid #555; padding: 6px; }
+	.btmanager-toolbar-spacer { flex: 1; }
+	.btmanager-editor { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; min-width: 0; min-height: 0; overflow: hidden; padding: 8px; }
+	.btmanager-tabs { display: flex; gap: 4px; border-bottom: 1px solid #555; }
+	.btmanager-tab { margin-bottom: 0; border-bottom: 0; }
+	.btmanager-tab.active-tab { background: #262626; color: #54db67; }
+	.btmanager-tab-content { min-height: 0; }
+	.btmanager-tab-content[hidden] { display: none; }
+	.btmanager-text-tab { display: grid; grid-template-rows: minmax(150px, 1fr) minmax(110px, 0.7fr); gap: 8px; height: 100%; }
+	.btmanager-editor textarea { width: 100%; height: 100%; box-sizing: border-box; resize: none; color: #eee; background: #171717; font-family: 'Ubuntu Mono', monospace; font-size: 0.9rem; }
+	.btmanager-actions { display: flex; gap: 6px; align-items: center; }
+	.btmanager-graph { overflow: auto; background: #1b1b1b; border: 1px solid #555; padding: 8px; white-space: pre-wrap; font-family: 'Ubuntu Mono', monospace; }
+	.btmanager-tree-tab { height: 100%; min-height: 0; }
+	.btmanager-workspace { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 8px; height: 100%; min-height: 0; overflow: hidden; }
+	.btmanager-workspace.btmanager-components-hidden { grid-template-columns: 28px minmax(0, 1fr); }
+	.btmanager-node-library { position: relative; display: flex; flex-direction: column; gap: 8px; min-height: 0; height: 100%; box-sizing: border-box; overflow: hidden; background: #1b1b1b; border: 1px solid #555; padding: 8px; }
+	.btmanager-inspector { position: absolute; top: 12px; right: 12px; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; width: 180px; max-height: 280px; min-height: 0; background: rgba(27, 27, 27, 0.84); border: 1px solid rgba(150, 150, 150, 0.75); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); padding: 8px; z-index: 1; }
+	.btmanager-library-header { display: flex; justify-content: space-between; gap: 6px; align-items: center; }
+	.btmanager-library-heading, .btmanager-inspector-heading { margin: 0; color: #ddd; font-size: 0.9rem; }
+	.btmanager-library-toggle { margin: 0; padding: 2px 6px; min-width: 24px; }
+	.btmanager-components-hidden .btmanager-node-library { padding: 0; }
+	.btmanager-components-hidden .btmanager-library-header { justify-content: center; }
+	.btmanager-components-hidden .btmanager-library-heading, .btmanager-components-hidden .btmanager-library-content { display: none; }
+	.btmanager-components-hidden .btmanager-library-toggle { height: 100%; border: 0; border-radius: 0; }
+	.btmanager-node-search { width: 100%; box-sizing: border-box; background: #171717; color: #eee; border: 1px solid #555; padding: 7px 8px; }
+	.btmanager-library-content { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 0; overflow: hidden; }
+	.btmanager-node-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: scroll; scrollbar-gutter: stable; scrollbar-color: #8b8b8b #202020; scrollbar-width: auto; }
+	.btmanager-node-list::-webkit-scrollbar { width: 12px; }
+	.btmanager-node-list::-webkit-scrollbar-track { background: #202020; }
+	.btmanager-node-list::-webkit-scrollbar-thumb { background: #8b8b8b; border: 3px solid #202020; border-radius: 8px; }
+	.btmanager-node-category { border-top: 1px solid #444; }
+	.btmanager-node-category:first-child { border-top: 0; }
+	.btmanager-node-category summary { cursor: pointer; padding: 7px 2px; color: #bbb; font-size: 0.85rem; }
+	.btmanager-node-items { display: flex; flex-direction: column; gap: 5px; padding-bottom: 7px; }
+	.btmanager-node-item { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; padding: 7px 8px; border: 1px solid #555; background: #2a2a2a; color: #eee; }
+	.btmanager-node-item.active { border-color: #54db67; background: #1f3b26; }
+	.btmanager-node-item small { color: #9cc8ff; }
+	.btmanager-node-empty { color: #aaa; padding: 8px 0; }
+	.btmanager-graph-panel { position: relative; min-height: 0; }
+	.btmanager-tree { height: 100%; box-sizing: border-box; overflow: auto; background: #171717; border: 1px solid #555; }
+	.btmanager-tree-canvas { display: block; min-width: 100%; min-height: 100%; background-image: radial-gradient(#333 1px, transparent 1px); background-size: 20px 20px; cursor: grab; }
+	.btmanager-tree-canvas.panning { cursor: grabbing; }
+	.btmanager-tree-edge { fill: none; stroke: #858585; stroke-width: 2; }
+	.btmanager-tree-node { cursor: pointer; }
+	.btmanager-tree-node rect { stroke: #b0b0b0; stroke-width: 1.5; rx: 7; }
+	.btmanager-tree-node:hover rect, .btmanager-tree-node.selected rect { stroke: #fff; stroke-width: 2.5; }
+	.btmanager-tree-node.replace-target rect { stroke: #78db88; stroke-width: 3; }
+	.btmanager-tree-node.read-only-node rect { stroke-dasharray: 5 3; }
+	.btmanager-tree-canvas.dragging-component .btmanager-tree-node { opacity: 0.35; }
+	.btmanager-tree-canvas.dragging-component .btmanager-tree-node.can-receive { opacity: 1; }
+	.btmanager-tree-canvas.dragging-component .btmanager-tree-node.root-node { opacity: 1; }
+	.btmanager-tree-slot { stroke-width: 1.5; cursor: copy; }
+	.btmanager-tree-slot.list-slot { fill: #315e38; stroke: #78db88; }
+	.btmanager-tree-slot.fixed-slot { fill: #563d76; stroke: #c6a0ed; }
+	.btmanager-tree-slot text { fill: #e5ffe9; font-family: sans-serif; font-size: 15px; font-weight: bold; pointer-events: none; }
+	.btmanager-tree-slot.fixed-slot text { fill: #f1e6ff; }
+	.btmanager-tree-slot { display: none; }
+	.btmanager-tree-canvas.dragging-component .btmanager-tree-slot { display: block; }
+	.btmanager-tree-node text { fill: #f3f3f3; font-family: 'Ubuntu Mono', monospace; font-size: 13px; pointer-events: none; }
+	.btmanager-tree-node .btmanager-tree-node-type { fill: rgba(255, 255, 255, 0.72); font-size: 10px; }
+	.btmanager-subtree-toggle { cursor: pointer; }
+	.btmanager-subtree-toggle circle { fill: #276c72; stroke: #a9f1f6; stroke-width: 1.5; }
+	.btmanager-subtree-toggle text { fill: #efffff; font-family: sans-serif; font-size: 15px; font-weight: bold; pointer-events: none; }
+	.btmanager-inspector-content { overflow: auto; color: #ddd; font-size: 0.9rem; }
+	.btmanager-inspector-content dl { margin: 0; }
+	.btmanager-inspector-content dt { margin-top: 10px; color: #9cc8ff; }
+	.btmanager-inspector-content dd { margin: 3px 0 0; }
+	.btmanager-property-panel { position: absolute; bottom: 12px; left: 12px; z-index: 2; width: min(520px, calc(100% - 48px)); max-height: 180px; overflow: auto; background: rgba(27, 27, 27, 0.84); border: 1px solid rgba(150, 150, 150, 0.75); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); padding: 8px; }
+	.btmanager-property-panel[hidden] { display: none; }
+	.btmanager-property-heading { margin: 0 0 8px; color: #ddd; font-size: 0.9rem; }
+	.btmanager-port { padding: 4px 0; border-bottom: 1px solid #333; font-family: 'Ubuntu Mono', monospace; }
+	.btmanager-port small { color: #aaa; }
+	.btmanager-attribute-list { display: flex; flex-direction: column; gap: 6px; }
+	.btmanager-attribute-row { display: grid; grid-template-columns: minmax(54px, 0.7fr) minmax(62px, 1fr) auto; gap: 4px; align-items: center; }
+	.btmanager-attribute-row input { min-width: 0; box-sizing: border-box; background: #171717; color: #eee; border: 1px solid #555; padding: 4px; font-family: 'Ubuntu Mono', monospace; }
+	.btmanager-attribute-remove { margin: 0; padding: 2px 5px; color: #ffb5b5; }
+	.btmanager-inspector-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+	.btmanager-inspector-actions button { margin: 0; padding: 4px 6px; }
+	@media (max-width: 900px) { .btmanager-workspace { grid-template-columns: 200px minmax(0, 1fr); } .btmanager-workspace.btmanager-components-hidden { grid-template-columns: 28px minmax(0, 1fr); } }
+</style>
+<section id="{uniqueID}_panel" class="btmanager-panel noselect" hidden>
+	<div id="{uniqueID}_resize" class="btmanager-resize" title="Resize behavior tree panel"></div>
+	<header class="btmanager-toolbar">
+		<strong id="{uniqueID}_title">Behavior Trees</strong>
+		<select id="{uniqueID}_files" class="btmanager-file-select" aria-label="Behavior tree file" disabled><option>Configure an XML folder with a long press on the icon.</option></select>
+		<button id="{uniqueID}_open" title="Choose XML folder">Open…</button>
+		<button id="{uniqueID}_new" title="Create behavior tree file">New…</button>
+		<button id="{uniqueID}_new_subtree" title="Create local subtree" disabled>New SubTree…</button>
+		<button id="{uniqueID}_delete_file" title="Delete selected behavior tree file" disabled>Delete</button>
+		<span class="btmanager-toolbar-spacer"></span>
+		<button id="{uniqueID}_maximize" title="Maximize editor" aria-label="Maximize editor">⛶</button>
+	</header>
+	<div class="btmanager-editor">
+		<div class="btmanager-tabs" role="tablist"><button id="{uniqueID}_tree_tab_button" class="btmanager-tab active-tab" role="tab" aria-selected="true">Tree</button><button id="{uniqueID}_text_tab_button" class="btmanager-tab" role="tab" aria-selected="false">Text</button></div>
+		<div id="{uniqueID}_text_tab" class="btmanager-tab-content btmanager-text-tab" role="tabpanel" hidden><textarea id="{uniqueID}_xml" spellcheck="false" disabled></textarea><pre id="{uniqueID}_graph" class="btmanager-graph">Select an XML file to inspect its behavior tree.</pre></div>
+		<div id="{uniqueID}_tree_tab" class="btmanager-tab-content btmanager-tree-tab" role="tabpanel">
+			<div class="btmanager-workspace">
+				<aside class="btmanager-node-library"><div class="btmanager-library-header"><h2 class="btmanager-library-heading">Components</h2><button id="{uniqueID}_components_toggle" class="btmanager-library-toggle" title="Hide components" aria-label="Hide components">‹</button></div><div class="btmanager-library-content"><input id="{uniqueID}_node_search" class="btmanager-node-search" type="search" placeholder="Search components..." aria-label="Search components" /><div id="{uniqueID}_node_list" class="btmanager-node-list"></div></div></aside>
+				<div class="btmanager-graph-panel"><div id="{uniqueID}_tree" class="btmanager-tree">Select an XML file to inspect its behavior tree.</div><aside class="btmanager-inspector"><h2 class="btmanager-inspector-heading">Inspector</h2><div id="{uniqueID}_inspector" class="btmanager-inspector-content">Select a component to inspect its ports.</div></aside><section id="{uniqueID}_properties" class="btmanager-property-panel" hidden><h2 class="btmanager-property-heading">Properties</h2><div id="{uniqueID}_property_content"></div></section></div>
+			</div>
+		</div>
+		<div class="btmanager-actions"><button id="{uniqueID}_undo" disabled>Undo</button><button id="{uniqueID}_redo" disabled>Redo</button><button id="{uniqueID}_save" disabled>Save</button><button id="{uniqueID}_validate" disabled>Validate</button><span id="{uniqueID}_save_status" aria-live="polite"></span></div>
+	</div>
+</section>

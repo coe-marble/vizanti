@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" main_tree_to_execute="NavigateWithRecovery">
+  <BehaviorTree ID="NavigateWithRecovery">
+    <RecoveryNode name="navigate_recovery" number_of_retries="2">
+      <PipelineSequence name="navigate_pipeline">
+        <RateController hz="1.0">
+          <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+        </RateController>asdfsadfasdf
+        <FollowPath path="{path}" controller_id="FollowPath"/>
+      </PipelineSequence>
+      <Sequence name="recovery_actions">
+        <ClearEntireCostmap service_name="global_costmap/clear_entirely_global_costmap"/>
+        <Spin spin_dist="1.57"/>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

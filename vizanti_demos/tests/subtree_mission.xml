@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence name="mission">
+      <SubTree ID="PrepareRobot" battery_threshold="0.30"/>
+      <SubTree ID="VisitWaypoint" target="{first_waypoint}"/>
+      <SubTree ID="VisitWaypoint" target="{second_waypoint}"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="PrepareRobot">
+    <Sequence>
+      <CheckBattery minimum_charge="{battery_threshold}"/>
+      <Wait seconds="1"/>
+    </Sequence>
+  </BehaviorTree>
+
+  <BehaviorTree ID="VisitWaypoint">
+    <Fallback>
+      <GoalReached goal="{target}"/>
+      <NavigateToPose goal="{target}"/>
+    </Fallback>
+  </BehaviorTree>
+</root>

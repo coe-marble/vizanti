@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4" main_tree_to_execute="IncludeDropTest">
+  <include path="external_subtree_library.xml"/><BehaviorTree ID="IncludeDropTest">
+    <Sequence name="drop_target">
+      <AlwaysSuccess name="start"/>
+    <SubTree ID="ExternalRecovery"/></Sequence>
+  </BehaviorTree>
+</root>

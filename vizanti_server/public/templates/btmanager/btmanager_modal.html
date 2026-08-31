@@ -1,0 +1,43 @@
+<div id="{uniqueID}_modal" class="modal_outer noselect">
+	<div class="modal_inner noselect">
+		<h3>Behavior Tree Manager</h3>
+		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
+		<hr class="dark_hr"/>
+
+		<label for="{uniqueID}_root">Local XML folder:</label>
+		<input id="{uniqueID}_root" type="text" placeholder="~/nav2_behavior_trees">
+		<p class="comment">This path is resolved by the Vizanti server. Only XML files inside this folder can be read or changed.</p>
+		<button id="{uniqueID}_configure">Load XML files</button>
+
+		<div class="spacer"></div>
+		<hr class="dark_hr"/>
+		<button class="delete_button" onclick="removeWidget('{uniqueID}')">Remove Widget</button>
+	</div>
+</div>
+
+<div id="{uniqueID}_create_modal" class="modal_outer noselect">
+	<div class="modal_inner noselect">
+		<h3 id="{uniqueID}_create_title">Create</h3>
+		<p id="{uniqueID}_create_status" class="status"></p>
+		<hr class="dark_hr"/>
+
+		<label id="{uniqueID}_create_label" for="{uniqueID}_create_input">Name:</label>
+		<input id="{uniqueID}_create_input" type="text" autocomplete="off">
+		<p id="{uniqueID}_create_hint" class="comment"></p>
+
+		<div class="spacer"></div>
+		<button id="{uniqueID}_create_confirm">Create</button>
+		<button id="{uniqueID}_create_cancel">Cancel</button>
+	</div>
+</div>
+
+<div id="{uniqueID}_delete_file_modal" class="modal_outer noselect">
+	<div class="modal_inner noselect">
+		<h3>Delete Behavior Tree File</h3>
+		<p id="{uniqueID}_delete_file_message" class="comment"></p>
+		<p>This cannot be undone.</p>
+		<div class="spacer"></div>
+		<button id="{uniqueID}_delete_file_confirm" class="delete_button">Delete file</button>
+		<button id="{uniqueID}_delete_file_cancel">Cancel</button>
+	</div>
+</div>

@@ -11,6 +11,7 @@ import rclpy
 from flask import Flask, render_template, send_from_directory, make_response, request
 from waitress.server import create_server
 from ament_index_python.packages import get_package_share_directory
+from bt_file_manager import BtFileManager, register_routes
 
 from pathlib import Path
 
@@ -24,6 +25,7 @@ param_port = 5000
 param_port_rosbridge = 5001
 param_compression = "none"
 param_default_widget_config = ""
+bt_file_manager = BtFileManager()
 
 def get_public_dir():
 	p = Path(__file__).resolve()
@@ -233,6 +235,7 @@ def main(args=None):
 	app.add_url_rule(param_base_url + '/assets/robot_model/paths', 'list_robot_model_files', list_robot_model_files)
 	app.add_url_rule(param_base_url + '/ros_launch_params', 'ros_launch_params', list_ros_launch_params)
 	app.add_url_rule(param_base_url + '/default_widget_config', 'get_default_widget_config', get_default_widget_config)
+	register_routes(app, param_base_url, bt_file_manager)
 	app.add_url_rule(param_base_url + '/<path:path>', 'serve_static', serve_static)
 
 	server = ServerThread(app, param_host, param_port)

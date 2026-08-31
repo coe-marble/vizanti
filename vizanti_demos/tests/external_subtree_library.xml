@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root BTCPP_format="4">
+  <BehaviorTree ID="ExternalRecovery">
+    <Fallback name="external_recovery">
+      <AlwaysSuccess name="already_recovered" />
+      <Sequence name="perform_recovery">
+        <Wait seconds="1" />
+        <AlwaysSuccess name="recovery_complete" />
+      </Sequence>
+    </Fallback>
+  </BehaviorTree>
+
+  <BehaviorTree ID="ExternalWait">
+    <Sequence name="external_wait">
+      <Wait seconds="2" />
+      <AlwaysSuccess name="wait_complete" />
+    </Sequence>
+  </BehaviorTree>
+</root>
