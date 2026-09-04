@@ -3,12 +3,19 @@ let tfModule = await import(`${base_url}/js/modules/tf.js`);
 let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let tf = tfModule.tf;
 let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
+
+const useSelectedVehicleCheckbox = document.getElementById("{uniqueID}_use_selected_vehicle");
+const selectedVehicleSelector = document.getElementById("{uniqueID}_selected_vehicle");
+const topicTarget = document.getElementById("{uniqueID}_topic_target");
+const vehicleTarget = document.getElementById("{uniqueID}_vehicle_target");
+let selectedVehicleId = "";
 
 let topic = getTopic("{uniqueID}");
 let status = new Status(
@@ -19,6 +26,8 @@ let status = new Status(
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
 	topic = loaded_data.topic;
+	useSelectedVehicleCheckbox.checked = loaded_data.use_selected_vehicle ?? false;
+	selectedVehicleId = loaded_data.selected_vehicle_id ?? "";
 }else{
 	saveSettings();
 }
@@ -31,14 +40,73 @@ if(topic == ""){
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic
+		topic: topic,
+		use_selected_vehicle: useSelectedVehicleCheckbox.checked,
+		selected_vehicle_id: selectedVehicleId,
 	}
 	settings.save();
+}
+
+function refreshVehicleSelector() {
+	const vehicles = vehicleSelectionModule.getRegisteredVehicles();
+	selectedVehicleSelector.innerHTML = "<option value=''>Select vehicle</option>";
+	vehicles.forEach((vehicle) => {
+		const option = document.createElement("option");
+		option.value = vehicle.id;
+		option.textContent = `${vehicle.name} (${vehicle.namespace || "/"})`;
+		selectedVehicleSelector.appendChild(option);
+	});
+	selectedVehicleSelector.value = selectedVehicleId;
+}
+
+function updateVehicleTargetState() {
+	const useVehicleTarget = useSelectedVehicleCheckbox.checked;
+	topicTarget.hidden = useVehicleTarget;
+	vehicleTarget.hidden = !useVehicleTarget;
+	selectedVehicleSelector.disabled = !useVehicleTarget;
+}
+
+useSelectedVehicleCheckbox.addEventListener("change", () => {
+	updateVehicleTargetState();
+	saveSettings();
+});
+selectedVehicleSelector.addEventListener("change", () => {
+	selectedVehicleId = selectedVehicleSelector.value;
+	saveSettings();
+});
+window.addEventListener("vehicle_registry_changed", refreshVehicleSelector);
+refreshVehicleSelector();
+updateVehicleTargetState();
+
+function getPublishTopic() {
+	if (!useSelectedVehicleCheckbox.checked) {
+		return topic;
+	}
+
+	const selectedVehicle = vehicleSelectionModule.getRegisteredVehicles()
+		.find((vehicle) => vehicle.id === selectedVehicleId);
+	const configuredTopic = selectedVehicle?.gotoTopic?.trim();
+	if (!selectedVehicle || !configuredTopic) {
+		status.setError("Select a vehicle with a Go To Point Topic.");
+		return null;
+	}
+
+	if (configuredTopic.startsWith("/")) {
+		return configuredTopic;
+	}
+
+	const namespace = selectedVehicle.namespace.replace(/^\/+|\/+$/g, "");
+	return namespace ? `/${namespace}/${configuredTopic}` : `/${configuredTopic}`;
 }
 
 function sendMessage(pos, delta){
 	if(!pos || !delta){
 		status.setError("Could not send message, pose invalid.");
+		return;
+	}
+
+	const publishTopic = getPublishTopic();
+	if (!publishTopic) {
 		return;
 	}
 
@@ -53,7 +121,7 @@ function sendMessage(pos, delta){
 
 	const publisher = new ROSLIB.Topic({
 		ros: rosbridge.ros,
-		name: topic,
+		name: publishTopic,
 		messageType: 'geometry_msgs/msg/PoseStamped',
 	});
 

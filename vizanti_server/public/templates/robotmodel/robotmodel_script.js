@@ -4,6 +4,7 @@ let tfModule = await import(`${base_url}/js/modules/tf.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let pathsModule = await import(`${base_url}/assets/robot_model/paths`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let tf = tfModule.tf;
@@ -11,6 +12,8 @@ let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 let paths = pathsModule.default;
 let applyRotation = tfModule.applyRotation;
+let selectVehicle = vehicleSelectionModule.selectVehicle;
+let registerVehicle = vehicleSelectionModule.registerVehicle;
 
 let models = {};
 let categorizedModels = {};
@@ -57,6 +60,9 @@ const offsetYSelector = document.getElementById("{uniqueID}_offset_y");
 const offsetYawSelector = document.getElementById("{uniqueID}_offset_yaw");
 
 const robotName = document.getElementById("{uniqueID}_name");
+const namespaceSelector = document.getElementById("{uniqueID}_namespace");
+const gotoTopicSelector = document.getElementById("{uniqueID}_goto_topic");
+const pathTopicSelector = document.getElementById("{uniqueID}_path_topic");
 
 const opacitySlider = document.getElementById('{uniqueID}_opacity');
 const opacityValue = document.getElementById('{uniqueID}_opacity_value');
@@ -69,6 +75,9 @@ offsetXSelector.addEventListener('input', saveSettings);
 offsetYSelector.addEventListener('input', saveSettings);
 offsetYawSelector.addEventListener('input', saveSettings);
 robotName.addEventListener('input', saveSettings);
+namespaceSelector.addEventListener('input', saveSettings);
+gotoTopicSelector.addEventListener('input', saveSettings);
+pathTopicSelector.addEventListener('input', saveSettings);
 lengthSelector.addEventListener('input', () => {
 	const value = parseFloat(lengthSelector.value);
 	if (!Number.isNaN(value)) {
@@ -81,7 +90,6 @@ lengthSelector.addEventListener('input', () => {
 let frame = find_base_frame();
 let sprite = "4wd";
 let length = parseFloat(lengthSelector.value) || 1;
-let robotFocus = false;
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
@@ -89,6 +97,9 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	length = parseFloat(loaded_data.length) || length;
 	lengthSelector.value = length;
 	robotName.value = loaded_data.robotName ?? "";
+	namespaceSelector.value = loaded_data.namespace ?? namespaceFromFrame(frame);
+	gotoTopicSelector.value = loaded_data.goto_topic ?? "goto_point";
+	pathTopicSelector.value = loaded_data.path_topic ?? "plan";
 
 	offsetXSelector.value = loaded_data.offset_x ?? 0.0;
 	offsetYSelector.value = loaded_data.offset_y ?? 0.0;
@@ -100,6 +111,9 @@ if(settings.hasOwnProperty("{uniqueID}")){
 
 	sprite = loaded_data.sprite.trim() ?? "4wd";
 }else{
+	namespaceSelector.value = namespaceFromFrame(frame);
+	gotoTopicSelector.value = "goto_point";
+	pathTopicSelector.value = "plan";
 	saveSettings();
 }
 
@@ -108,6 +122,9 @@ function saveSettings(){
 		frame: frame,
 		sprite: sprite,
 		robotName: robotName.value,
+		namespace: normalizedNamespace(),
+		goto_topic: gotoTopicSelector.value.trim(),
+		path_topic: pathTopicSelector.value.trim(),
 		opacity: opacitySlider.value,
 			length: length,
 		offset_x: offsetXSelector.value,
@@ -115,8 +132,31 @@ function saveSettings(){
 		offset_yaw: offsetYawSelector.value,
 	}
 	settings.save();
+	registerCurrentVehicle();
 
 	canvas.style.opacity = opacitySlider.value;
+	if (vehicleSelectionModule.getSelectedVehicle()?.id === "{uniqueID}") {
+		selectCurrentVehicle();
+	}
+}
+
+function namespaceFromFrame(frameName) {
+	const normalizedFrame = String(frameName ?? "").replace(/^\/+|\/+$/g, "");
+	const baseFrameIndex = normalizedFrame.search(/\/(?:base_link|base_footprint|base)$/);
+	if (baseFrameIndex > 0) {
+		return `/${normalizedFrame.slice(0, baseFrameIndex)}`;
+	}
+
+	return "";
+}
+
+function normalizedNamespace() {
+	const value = namespaceSelector.value.trim().replace(/\/+$/g, "");
+	if (!value || value === "/") {
+		return "";
+	}
+
+	return value.startsWith("/") ? value : `/${value}`;
 }
 
 function find_base_frame(){
@@ -196,9 +236,21 @@ async function drawRobot() {
 		if(is_flipped)
 			ctx.filter = 'invert(1)';
 		else
-			ctx.filter = 'none';
+		ctx.filter = 'none';
 
 		ctx.drawImage(modelimg, -renderedLength/2, -(renderedLength*ratio)/2, renderedLength, renderedLength*ratio);
+
+		if (vehicleSelectionModule.getSelectedVehicle()?.id === "{uniqueID}") {
+			ctx.filter = 'none';
+			ctx.strokeStyle = '#4da3ff';
+			ctx.lineWidth = 3;
+			ctx.strokeRect(
+				-renderedLength / 2 - 4,
+				-(renderedLength * ratio) / 2 - 4,
+				renderedLength + 8,
+				renderedLength * ratio + 8,
+			);
+		}
 
 		status.setOK();
 	}else{
@@ -342,6 +394,9 @@ function setFrameList(){
 
 frameSelector.addEventListener("change", (event) => {
 	frame = frameSelector.value;
+	if (!namespaceSelector.value.trim()) {
+		namespaceSelector.value = namespaceFromFrame(frame);
+	}
 	saveSettings();
 });
 
@@ -367,49 +422,115 @@ icon.addEventListener("touchend", cancelLongPress);
 icon.addEventListener("touchcancel", cancelLongPress);
 
 icon.addEventListener("click", (event) => {
-	if(!isLongPress)
+	event.stopPropagation();
+	if (!isLongPress) {
+		selectCurrentVehicle();
 		setActive(!isRobotFocused);
-	else
+	} else {
 		isLongPress = false;
+	}
 });
+
+function selectCurrentVehicle() {
+	selectVehicle(getCurrentVehicle());
+}
+
+function registerCurrentVehicle() {
+	registerVehicle(getCurrentVehicle());
+}
+
+function getCurrentVehicle() {
+	return {
+		id: "{uniqueID}",
+		name: robotName.value.trim() || frame,
+		namespace: normalizedNamespace(),
+		gotoTopic: gotoTopicSelector.value.trim(),
+		pathTopic: pathTopicSelector.value.trim(),
+		frame: frame,
+	};
+}
+
+function endDrag() {
+	setActive(false);
+}
+
+function addListeners() {
+	view_container.addEventListener('mouseup', endDrag);
+	view_container.addEventListener('touchend', endDrag);
+}
+
+function removeListeners() {
+	view_container.removeEventListener('mouseup', endDrag);
+	view_container.removeEventListener('touchend', endDrag);
+}
+
+function setActive(value) {
+	isRobotFocused = value;
+
+	if (isRobotFocused) {
+		addListeners();
+		drawRobot();
+		view_container.style.cursor = "pointer";
+	} else {
+		removeListeners();
+		drawRobot();
+		view_container.style.cursor = "";
+	}
+}
 
 icon.addEventListener("contextmenu", (event) => {
 	event.preventDefault();
 });
 
 
-function endDrag(event){
-	setActive(false);
+function updateVehicleSelection(event) {
+	const isSelected = event.detail?.id === "{uniqueID}";
+	icon.classList.toggle("vehicle-selected", isSelected);
+	icon.style.backgroundColor = isSelected
+		? "rgba(255, 255, 255, 1.0)"
+		: "rgba(124, 124, 124, 0.3)";
+	icon.title = isSelected
+		? `Selected vehicle: ${event.detail.name} (${event.detail.namespace || "/"})`
+		: "Select vehicle";
+	drawRobot();
 }
 
+window.addEventListener("vehicle_selection_changed", updateVehicleSelection);
+updateVehicleSelection({ detail: vehicleSelectionModule.getSelectedVehicle() });
+registerCurrentVehicle();
 
-function addListeners(){
-	view_container.addEventListener('mouseup', endDrag);
-	view_container.addEventListener('touchend', endDrag);
-}
+function selectRobotOnMap(event) {
+	if (event.type === "mousedown" && event.button !== 0) {
+		return;
+	}
 
-function removeListeners(){
-	view_container.removeEventListener('mouseup', endDrag);
-	view_container.removeEventListener('touchend', endDrag);
-}
+	const pointer = event.touches ? event.touches[0] : event;
+	const robotFrame = tf.absoluteTransforms[frame];
+	const modelImage = models[sprite];
+	if (!pointer || !robotFrame || !modelImage) {
+		return;
+	}
 
+	const unit = view.getMapUnitsInPixels(1.0);
+	const renderedLength = Math.max(length, 50 / unit) * unit;
+	const imageRatio = modelImage.naturalHeight / modelImage.naturalWidth;
+	const robotPosition = view.fixedToScreen({
+		x: robotFrame.translation.x,
+		y: robotFrame.translation.y,
+	});
+	const hitRadius = Math.max(renderedLength, renderedLength * imageRatio) / 2 + 8;
+	const distance = Math.hypot(
+		pointer.clientX - robotPosition.x,
+		pointer.clientY - robotPosition.y,
+	);
 
-
-function setActive(value){
-	isRobotFocused = value;
-
-	if(isRobotFocused){
-		addListeners();
-		drawRobot();
-		icon.style.backgroundColor = "rgba(255, 255, 255, 1.0)";
-		view_container.style.cursor = "pointer";
-	}else{
-		removeListeners();
-		drawRobot();
-		icon.style.backgroundColor = "rgba(124, 124, 124, 0.3)";
-		view_container.style.cursor = "";
+	if (distance <= hitRadius) {
+		selectCurrentVehicle();
 	}
 }
+
+view_container.addEventListener("mousedown", selectRobotOnMap);
+view_container.addEventListener("touchstart", selectRobotOnMap, { passive: true });
 
 
 function startLongPress(event) {

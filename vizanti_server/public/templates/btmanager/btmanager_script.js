@@ -99,6 +99,7 @@ let componentsWidth = 0;
 let runtimeMode = '';
 let inspectedNode = null;
 let inspectedElement = null;
+let treeViewBox = '';
 let longPressTimer;
 let isLongPress = false;
 const expandedSubtrees = new Set();
@@ -171,12 +172,18 @@ function setRuntimeMode(mode) {
 	updateRuntimeControls();
 	if (selectedPath && editor.value) {
 		try {
-			renderGraph(editor.value);
+			renderGraphPreservingView(editor.value);
 		} catch (error) {
 			graph.textContent = error.message;
 		}
 	}
 	if (inspectedNode) renderInspector(inspectedNode, inspectedElement);
+}
+
+function renderGraphPreservingView(xml) {
+	const currentCanvas = tree.querySelector('.btmanager-tree-canvas');
+	treeViewBox = currentCanvas?.getAttribute('viewBox') || treeViewBox;
+	renderGraph(xml);
 }
 
 function setComponentsWidth(width) {
@@ -226,6 +233,7 @@ function clearSelectedFile() {
 	savedContent = '';
 	includedSubtrees = [];
 	includedTreeDefinitions.clear();
+	treeViewBox = '';
 	editor.value = '';
 	renderInspector(null);
 	graph.textContent = 'Select an XML file to inspect its behavior tree.';
@@ -359,9 +367,15 @@ function renderTreeCanvas(documentRoot) {
 	svg.setAttribute('height', String(canvasHeight));
 	svg.setAttribute('viewBox', `0 0 ${canvasWidth} ${canvasHeight}`);
 	const camera = { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
+	const savedViewBox = treeViewBox.trim().split(/\s+/).map(Number);
+	if (savedViewBox.length === 4 && savedViewBox.every(Number.isFinite) && savedViewBox[2] > 0 && savedViewBox[3] > 0) {
+		[camera.x, camera.y, camera.width, camera.height] = savedViewBox;
+	}
 	const updateCamera = () => {
-		svg.setAttribute('viewBox', `${camera.x} ${camera.y} ${camera.width} ${camera.height}`);
+		treeViewBox = `${camera.x} ${camera.y} ${camera.width} ${camera.height}`;
+		svg.setAttribute('viewBox', treeViewBox);
 	};
+	updateCamera();
 	const svgPoint = event => {
 		const point = svg.createSVGPoint();
 		point.x = event.clientX;
@@ -475,7 +489,7 @@ function renderTreeCanvas(documentRoot) {
 		const declaration = editor.value.match(/^\s*(<\?xml[^>]*\?>\s*)/i)?.[1] || '';
 		editor.value = `${declaration}${new XMLSerializer().serializeToString(xmlDocument.documentElement)}`;
 		updateTitle();
-		renderGraph(editor.value);
+		renderGraphPreservingView(editor.value);
 	};
 	const addComponent = (parent, component, childIndex = parent.children.length) => {
 		if (!canAcceptChild(parent)) {
@@ -986,6 +1000,7 @@ async function loadFile(path) {
 
 	try {
 		includedSubtrees = [];
+		treeViewBox = '';
 		const data = await request(`/bt/file/${encodeURIComponent(path).replace(/%2F/g, '/')}`);
 		selectedPath = data.path;
 		fileList.value = selectedPath;
@@ -1166,7 +1181,7 @@ async function startRuntime(mode) {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ content: editor.value }),
 		});
-		renderGraph(editor.value);
+		renderGraphPreservingView(editor.value);
 		setRuntimeMode(mode);
 		status.setOK(`${mode === 'debug' ? 'Debug' : 'Runtime'} view ready.`);
 	} catch (error) {

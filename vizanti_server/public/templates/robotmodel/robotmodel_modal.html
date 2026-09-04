@@ -30,6 +30,19 @@
 		<label for="{uniqueID}_name">Robot Name:</label>
 		<input type="text" id="{uniqueID}_name" name="name" placeholder="robot_name" value="robot">
 
+		<label for="{uniqueID}_namespace">ROS Namespace:</label>
+		<input type="text" id="{uniqueID}_namespace" name="namespace" placeholder="/robot_1">
+
+		<fieldset class="robotmodel-topics">
+			<legend>Vehicle Topics</legend>
+
+			<label for="{uniqueID}_goto_topic">Go To Point Topic:</label>
+			<input type="text" id="{uniqueID}_goto_topic" name="goto_topic" placeholder="goto_point">
+
+			<label for="{uniqueID}_path_topic">Path Topic:</label>
+			<input type="text" id="{uniqueID}_path_topic" name="path_topic" placeholder="plan">
+		</fieldset>
+
 		<label for="{uniqueID}_length">Robot Length (m):</label>
 		<input type="number" value="0.5" step="0.01" min="0.01" id="{uniqueID}_length">
 

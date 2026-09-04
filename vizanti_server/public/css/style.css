@@ -169,6 +169,12 @@ object {
 	background-color: rgba(175, 0, 0, 0.397);
 }
 
+.icon.vehicle-selected {
+	outline: 3px solid #4da3ff;
+	outline-offset: 2px;
+	box-shadow: 0 0 10px rgba(77, 163, 255, 0.7);
+}
+
 .icon:hover {
 	background-color: rgba(185, 185, 185, 0.3);
 	transform: scale(1.05);
@@ -1248,6 +1254,38 @@ li {
 
 .menu-item:hover {
   background-color: #f5f5f5;
+}
+
+.menu-item.menu-item-disabled {
+  color: #999;
+  cursor: not-allowed;
+}
+
+.menu-item.menu-item-disabled:hover {
+  background-color: transparent;
+}
+
+.robotmodel-topics {
+  margin: 12px 0;
+  padding: 8px 10px 10px;
+  border: 1px solid #666;
+  border-radius: 4px;
+}
+
+.robotmodel-topics legend {
+  padding: 0 5px;
+  color: #b4b4b4;
+  font-size: 0.9em;
+}
+
+.robotmodel-topics label {
+  display: block;
+  margin-top: 6px;
+}
+
+.robotmodel-topics input {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .menu-item.delete {

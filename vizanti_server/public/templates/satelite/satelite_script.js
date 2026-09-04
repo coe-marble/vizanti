@@ -4,6 +4,7 @@ let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let navsatModule = await import(`${base_url}/js/modules/navsat.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let tf = tfModule.tf;
@@ -53,6 +54,24 @@ const fixedPointInput = document.getElementById("{uniqueID}_fixed_point");
 const setFixedPointButton = document.getElementById("{uniqueID}_set_fixed_point");
 const contextMenu = document.getElementById("{uniqueID}_context_menu");
 const mapPointer = document.getElementById("{uniqueID}_map_pointer");
+const gotoPointAction = document.getElementById("{uniqueID}_goto_point_action");
+
+// Selecting the Go To action should keep the vehicle selected until its
+// namespace has been resolved for publication.
+contextMenu.addEventListener("mousedown", (event) => event.stopPropagation());
+contextMenu.addEventListener("touchstart", (event) => event.stopPropagation());
+
+function updateGotoPointAvailability() {
+	const hasSelectedVehicle = vehicleSelectionModule.getSelectedVehicle() !== null;
+	gotoPointAction.classList.toggle("menu-item-disabled", !hasSelectedVehicle);
+	gotoPointAction.setAttribute("aria-disabled", String(!hasSelectedVehicle));
+	gotoPointAction.title = hasSelectedVehicle
+		? "Send Go To Point to the selected vehicle"
+		: "Select a vehicle before sending Go To Point";
+}
+
+window.addEventListener("vehicle_selection_changed", updateGotoPointAvailability);
+updateGotoPointAvailability();
 
 const placeholder = new Image();
 placeholder.src = "assets/tile_loading.png";
@@ -142,7 +161,6 @@ if(settings.hasOwnProperty("{uniqueID}")){
 
 	smoothingCheckbox.checked = loaded_data.smoothing;
 	ignoreRotationCheckbox.checked = loaded_data.ignore_rotation ?? false;
-
 	opacitySlider.value = loaded_data.opacity;
 	setOpacityText(loaded_data.opacity);
 }else{
@@ -156,7 +174,7 @@ function saveSettings(){
 		server_url: server_url,
 		opacity: opacitySlider.value,
 		smoothing: smoothingCheckbox.checked,
-		ignore_rotation: ignoreRotationCheckbox.checked
+		ignore_rotation: ignoreRotationCheckbox.checked,
 	}
 	settings.save();
 }
@@ -600,12 +618,69 @@ function handleGotoPoint(pointX, pointY) {
 	}
 
 	const lla = Navsat.enuGroundToLla(local.x, local.y, enu_origin);
-	console.log(`Goto Point: Latitude: ${lla.latitude.toFixed(8)}, Longitude: ${lla.longitude.toFixed(8)}`);
+	publishGotoPoint(lla);
+}
+
+function resolveGotoTopic() {
+	const selectedVehicle = vehicleSelectionModule.getSelectedVehicle();
+	if (!selectedVehicle) {
+		status.setError("Select a vehicle before sending Go To Point.");
+		return null;
+	}
+
+	const configuredTopic = selectedVehicle.gotoTopic?.trim();
+	if (!configuredTopic) {
+		status.setError("The selected vehicle has no Go To Point topic.");
+		return null;
+	}
+
+	if (configuredTopic.startsWith("/")) {
+		return configuredTopic;
+	}
+
+	const namespace = selectedVehicle.namespace.replace(/^\/+|\/+$/g, "");
+	return namespace ? `/${namespace}/${configuredTopic}` : `/${configuredTopic}`;
+}
+
+function publishGotoPoint(lla) {
+	const resolvedTopic = resolveGotoTopic();
+	if (!resolvedTopic) {
+		return;
+	}
+
+	const now = new Date();
+	const publisher = new ROSLIB.Topic({
+		ros: rosbridge.ros,
+		name: resolvedTopic,
+		messageType: "sensor_msgs/msg/NavSatFix",
+	});
+	publisher.publish(new ROSLIB.Message({
+		header: {
+			stamp: {
+				sec: Math.floor(now.getTime() / 1000),
+				nanosec: (now.getTime() % 1000) * 1e6,
+			},
+			frame_id: map_fix.header.frame_id,
+		},
+		status: {
+			status: 0,
+			service: 0,
+		},
+		latitude: lla.latitude,
+		longitude: lla.longitude,
+		altitude: lla.altitude ?? 0.0,
+		position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+		position_covariance_type: 0,
+	}));
+	status.setOK();
 }
 
 
 window.handleContextMenuAction = function(event, action) {
 	if(action == "goto_point"){
+		if (vehicleSelectionModule.getSelectedVehicle() === null) {
+			return;
+		}
 		let pinX = mapPointer.offsetLeft + mapPointer.width / 2;
 		let pinY = mapPointer.offsetTop + mapPointer.height;
 		handleGotoPoint(pinX, pinY);

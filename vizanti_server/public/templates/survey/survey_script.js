@@ -3,6 +3,7 @@ let tfModule = await import(`${base_url}/js/modules/tf.js`);
 let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let tf = tfModule.tf;
@@ -21,6 +22,8 @@ let fixed_frame = tf.fixed_frame;
 let base_link_frame = find_base_frame();
 let seq = 0;
 let path_publisher = undefined;
+let pathPublisherTopic = undefined;
+let pathPublisherType = undefined;
 let mode = "IDLE";
 let shift_pressed = false;
 
@@ -53,6 +56,11 @@ const angleBox = document.getElementById("{uniqueID}_angle");
 const turnaroundBox = document.getElementById("{uniqueID}_turnaround");
 const crosshatchCheckbox = document.getElementById("{uniqueID}_crosshatch");
 const directTransitCheckbox = document.getElementById("{uniqueID}_directtransit");
+const useSelectedVehicleCheckbox = document.getElementById('{uniqueID}_use_selected_vehicle');
+const selectedVehicleSelector = document.getElementById('{uniqueID}_selected_vehicle');
+const topicTarget = document.getElementById('{uniqueID}_topic_target');
+const vehicleTarget = document.getElementById('{uniqueID}_vehicle_target');
+let selectedVehicleId = "";
 
 const zSetButton = document.getElementById("{uniqueID}_z_set");
 const deleteButton = document.getElementById("{uniqueID}_delete");
@@ -95,6 +103,8 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	turnaroundBox.value = loaded_data.turnaround ?? 1.0;
 	crosshatchCheckbox.checked = loaded_data.crosshatch ?? false;
 	directTransitCheckbox.checked = loaded_data.direct_transit ?? false;
+	useSelectedVehicleCheckbox.checked = loaded_data.use_selected_vehicle ?? false;
+	selectedVehicleId = loaded_data.selected_vehicle_id ?? "";
 
 	if(loaded_data.topic_type != undefined)
 		typedict[topic] = loaded_data.topic_type;
@@ -129,9 +139,63 @@ function saveSettings(){
 		angle: angleBox.value,
 		turnaround: turnaroundBox.value,
 		crosshatch: crosshatchCheckbox.checked,
-		direct_transit: directTransitCheckbox.checked
+		direct_transit: directTransitCheckbox.checked,
+		use_selected_vehicle: useSelectedVehicleCheckbox.checked,
+		selected_vehicle_id: selectedVehicleId,
 	}
 	settings.save();
+}
+
+function refreshVehicleSelector() {
+	const vehicles = vehicleSelectionModule.getRegisteredVehicles();
+	selectedVehicleSelector.innerHTML = "<option value=''>Select vehicle</option>";
+	vehicles.forEach((vehicle) => {
+		const option = document.createElement("option");
+		option.value = vehicle.id;
+		option.textContent = `${vehicle.name} (${vehicle.namespace || "/"})`;
+		selectedVehicleSelector.appendChild(option);
+	});
+	selectedVehicleSelector.value = selectedVehicleId;
+}
+
+function updateVehicleTargetState() {
+	const useVehicleTarget = useSelectedVehicleCheckbox.checked;
+	topicTarget.hidden = useVehicleTarget;
+	vehicleTarget.hidden = !useVehicleTarget;
+	selectedVehicleSelector.disabled = !useVehicleTarget;
+}
+
+useSelectedVehicleCheckbox.addEventListener('change', () => {
+	updateVehicleTargetState();
+	saveSettings();
+});
+selectedVehicleSelector.addEventListener('change', () => {
+	selectedVehicleId = selectedVehicleSelector.value;
+	saveSettings();
+});
+window.addEventListener("vehicle_registry_changed", refreshVehicleSelector);
+refreshVehicleSelector();
+updateVehicleTargetState();
+
+function getPublishTopic() {
+	if (!useSelectedVehicleCheckbox.checked) {
+		return topic;
+	}
+
+	const selectedVehicle = vehicleSelectionModule.getRegisteredVehicles()
+		.find((vehicle) => vehicle.id === selectedVehicleId);
+	const configuredTopic = selectedVehicle?.pathTopic?.trim();
+	if (!selectedVehicle || !configuredTopic) {
+		status.setError("Select a vehicle with a Path Topic.");
+		return null;
+	}
+
+	if (configuredTopic.startsWith("/")) {
+		return configuredTopic;
+	}
+
+	const namespace = selectedVehicle.namespace.replace(/^\/+|\/+$/g, "");
+	return namespace ? `/${namespace}/${configuredTopic}` : `/${configuredTopic}`;
 }
 
 // Survey geometry
@@ -380,7 +444,12 @@ function update(){
 
 // Message sending
 
-function sendMessage(pointlist){
+async function sendMessage(pointlist){
+	const publishTopic = getPublishTopic();
+	if (!publishTopic) {
+		return;
+	}
+
 
 	function getStamp(){
 		const currentTime = new Date();
@@ -424,7 +493,7 @@ function sendMessage(pointlist){
 
 	let timeStamp = getStamp();
 	let poseList = [];
-	let stamped = typedict[topic] == "nav_msgs/msg/Path";
+	const stamped = true;
 
 	if(pointlist.length > 0)
 	{
@@ -458,20 +527,30 @@ function sendMessage(pointlist){
 		}
 	}
 	
-	if(path_publisher !== undefined){
+	const messageType = 'nav_msgs/msg/Path';
+	if (path_publisher !== undefined && (
+		pathPublisherTopic !== publishTopic || pathPublisherType !== messageType
+	)) {
 		path_publisher.unadvertise();
+		path_publisher = undefined;
+		pathPublisherTopic = undefined;
+		pathPublisherType = undefined;
+		await new Promise((resolve) => setTimeout(resolve, 100));
 	}
 
-	path_publisher = new ROSLIB.Topic({
-		ros: rosbridge.ros,
-		name: topic,
-		messageType: stamped ? 'nav_msgs/msg/Path' : 'geometry_msgs/msg/PoseArray',
-		latched: true
-	});
+	if (path_publisher === undefined) {
+		path_publisher = new ROSLIB.Topic({
+			ros: rosbridge.ros,
+			name: publishTopic,
+			messageType: messageType,
+			latched: true,
+		});
+		pathPublisherTopic = publishTopic;
+		pathPublisherType = messageType;
+	}
 
 	const pathMessage = new ROSLIB.Message({
 		header: {
-			seq: seq++,
 			stamp: timeStamp,
 			frame_id: fixed_frame
 		},
@@ -1056,23 +1135,18 @@ function find_base_frame(){
 
 async function loadTopics(){
 	const result_path = await rosbridge.get_topics("nav_msgs/msg/Path");
-	const result_array = await rosbridge.get_topics("geometry_msgs/msg/PoseArray");
 
 	let topiclist = "";
 	result_path.forEach(element => {
 		topiclist += "<option value='"+element+"'>"+element+" (Path)</option>";
 		typedict[element] = "nav_msgs/msgs/Path";
 	});
-	result_array.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (PoseArray)</option>";
-		typedict[element] = "geometry_msgs/msgs/PoseArray";
-	});
 	selectionbox.innerHTML = topiclist
 
 	if(topic == "")
 		topic = selectionbox.value;
 	else{
-		if(result_path.includes(topic) || result_array.includes(topic)){
+		if(result_path.includes(topic)){
 			selectionbox.value = topic;
 		}else{
 			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
