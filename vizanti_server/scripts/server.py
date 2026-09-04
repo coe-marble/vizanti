@@ -39,10 +39,24 @@ app = Flask(__name__, static_folder=get_public_dir(), template_folder=get_public
 def get_file(path):
 	with open(param_default_widget_config, 'r') as f:
 		file_content = f.read()
-		js_module = f"const content = {json.dumps(file_content)};\nexport default content;"
-		response = make_response(js_module)
-		response.headers['Content-Type'] = 'application/javascript'
-		return response
+
+	if param_default_widget_config == os.path.join(app.static_folder, "assets/default_layout.json"):
+		config = json.loads(file_content)
+		robot_config = config.get("robot_default")
+		if robot_config is not None:
+			robot_name = os.environ.get("ROS_ROBOT_NAME", robot_config["robotName"])
+			namespace = os.environ.get("ROS_ROBOT_NAMESPACE", robot_config["namespace"])
+			namespace = namespace.strip().strip("/")
+			namespace = f"/{namespace}" if namespace else ""
+			robot_config["robotName"] = robot_name
+			robot_config["namespace"] = namespace
+			robot_config["frame"] = f"{namespace}/base_link" if namespace else "base_link"
+		file_content = json.dumps(config)
+
+	js_module = f"const content = {json.dumps(file_content)};\nexport default content;"
+	response = make_response(js_module)
+	response.headers['Content-Type'] = 'application/javascript'
+	return response
 
 def get_files(path, valid_extensions):
 	templates_dir = os.path.join(app.static_folder, path)

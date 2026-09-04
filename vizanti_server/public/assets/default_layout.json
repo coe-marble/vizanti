@@ -15,8 +15,25 @@
     {
       "type": "tf",
       "id": "tf_default"
+    },
+    {
+      "type": "robotmodel",
+      "id": "robot_default"
     }
   ],
+  "robot_default": {
+    "frame": "base_link",
+    "sprite": "4wd",
+    "robotName": "robot",
+    "namespace": "",
+    "goto_topic": "goto_point",
+    "path_topic": "plan",
+    "opacity": 1.0,
+    "length": 1,
+    "offset_x": 0.0,
+    "offset_y": 0.0,
+    "offset_yaw": 0.0
+  },
   "view": {
     "center": {
       "x": 0,
