@@ -11,6 +11,10 @@ const resizeHandle = document.getElementById('{uniqueID}_resize');
 const iconBar = document.getElementById('icon_bar');
 const rootInput = document.getElementById('{uniqueID}_root');
 const configureButton = document.getElementById('{uniqueID}_configure');
+const githubUrlInput = document.getElementById('{uniqueID}_github_url');
+const githubRefInput = document.getElementById('{uniqueID}_github_ref');
+const githubSubdirectoryInput = document.getElementById('{uniqueID}_github_subdirectory');
+const githubPullButton = document.getElementById('{uniqueID}_github_pull');
 const fileList = document.getElementById('{uniqueID}_files');
 const openButton = document.getElementById('{uniqueID}_open');
 const newButton = document.getElementById('{uniqueID}_new');
@@ -111,6 +115,9 @@ let createMode = '';
 
 if (settings.hasOwnProperty('{uniqueID}')) {
 	rootPath = settings['{uniqueID}'].root_path ?? '';
+	githubUrlInput.value = settings['{uniqueID}'].github_url ?? '';
+	githubRefInput.value = settings['{uniqueID}'].github_ref ?? 'main';
+	githubSubdirectoryInput.value = settings['{uniqueID}'].github_subdirectory ?? '';
 	panel.style.width = settings['{uniqueID}'].panel_width ?? '';
 	maximized = settings['{uniqueID}'].maximized ?? false;
 	componentsHidden = settings['{uniqueID}'].components_hidden ?? false;
@@ -119,9 +126,22 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 rootInput.value = rootPath;
 
 function saveSettings() {
-	settings['{uniqueID}'] = { root_path: rootPath, panel_width: panel.style.width, maximized, components_hidden: componentsHidden, components_width: componentsWidth };
+	settings['{uniqueID}'] = {
+		root_path: rootPath,
+		github_url: githubUrlInput.value,
+		github_ref: githubRefInput.value,
+		github_subdirectory: githubSubdirectoryInput.value,
+		panel_width: panel.style.width,
+		maximized,
+		components_hidden: componentsHidden,
+		components_width: componentsWidth,
+	};
 	settings.save();
 }
+
+githubUrlInput.addEventListener('input', saveSettings);
+githubRefInput.addEventListener('input', saveSettings);
+githubSubdirectoryInput.addEventListener('input', saveSettings);
 
 async function loadBundledNodeCatalog() {
 	try {
@@ -1123,6 +1143,57 @@ configureButton.addEventListener('click', async () => {
 		await loadFiles();
 	} catch (error) {
 		status.setError(error.message);
+	}
+});
+
+githubPullButton.addEventListener('click', async () => {
+	try {
+		saveSettings();
+		if (rootPath !== rootInput.value.trim()) {
+			const configured = await request('/bt/configure', {
+				method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: rootInput.value })
+			});
+			rootPath = configured.root;
+			rootInput.value = rootPath;
+			saveSettings();
+		}
+		githubPullButton.disabled = true;
+		const pull = async overwrite => request('/bt/github/pull', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				url: githubUrlInput.value,
+				ref: githubRefInput.value,
+				subdirectory: githubSubdirectoryInput.value,
+				overwrite,
+			}),
+		});
+		let data = await pull(false);
+		if (!Array.isArray(data.conflicts)) {
+			throw new Error('The server does not support file conflict checks. Restart Vizanti with the updated BT server.');
+		}
+		const conflicts = data.conflicts;
+		if (conflicts.length > 0) {
+			const overrideAll = window.confirm(
+				`The pull found ${conflicts.length} existing XML file${conflicts.length === 1 ? '' : 's'}.\n\n` +
+				'Choose OK to override all of them. Choose Cancel to decide for each file.'
+			);
+			if (overrideAll) {
+				data = await pull(true);
+			} else {
+				const overwritePaths = [];
+				for (const path of conflicts) {
+					if (window.confirm(`Override existing file?\n\n${path}`)) overwritePaths.push(path);
+				}
+				if (overwritePaths.length > 0) data = await pull(overwritePaths);
+			}
+		}
+		await loadFiles();
+		status.setOK(`Pulled ${data.copied} XML file${data.copied === 1 ? '' : 's'}.`);
+	} catch (error) {
+		status.setError(error.message);
+	} finally {
+		githubPullButton.disabled = false;
 	}
 });
 

@@ -1,8 +1,12 @@
 import hashlib
 import json
 import os
+import shutil
 import tempfile
+import urllib.parse
+import urllib.request
 import xml.etree.ElementTree as ElementTree
+import zipfile
 from pathlib import Path
 
 from flask import jsonify, request
@@ -60,6 +64,80 @@ class BtFileManager:
         if not self.set_root(root):
             return jsonify(error='The XML folder does not exist or is not a directory.'), 400
         return jsonify(root=str(self.xml_root))
+
+    def pull_github(self):
+        payload = request.get_json(silent=True) or {}
+        repository_url = payload.get('url', '')
+        reference = payload.get('ref', 'main')
+        subdirectory = payload.get('subdirectory', '')
+        overwrite = payload.get('overwrite', False)
+        if not all(isinstance(value, str) for value in (repository_url, reference, subdirectory)):
+            return jsonify(error='GitHub URL, branch/tag, and subdirectory must be strings.'), 400
+        if not isinstance(overwrite, (bool, list)):
+            return jsonify(error='Overwrite must be a boolean or a list of file paths.'), 400
+        overwrite_paths = set(overwrite if isinstance(overwrite, list) else [])
+        if any(not isinstance(path, str) or not path or Path(path).is_absolute() or '..' in Path(path).parts for path in overwrite_paths):
+            return jsonify(error='The overwrite file list contains an invalid path.'), 400
+
+        parsed_url = urllib.parse.urlparse(repository_url.strip())
+        if parsed_url.scheme != 'https' or parsed_url.netloc.lower() not in ('github.com', 'www.github.com'):
+            return jsonify(error='Only HTTPS GitHub repository URLs are supported.'), 400
+        repository_parts = [part for part in parsed_url.path.strip('/').split('/') if part]
+        if len(repository_parts) != 2:
+            return jsonify(error='Use a repository URL such as https://github.com/owner/repository.'), 400
+
+        owner, repository = repository_parts
+        repository = repository.removesuffix('.git')
+        reference = reference.strip() or 'main'
+        subdirectory = subdirectory.strip().strip('/')
+        if subdirectory and any(part in ('', '.', '..') for part in subdirectory.split('/')):
+            return jsonify(error='The repository subdirectory is invalid.'), 400
+        if self.xml_root is None:
+            return jsonify(error='The behavior tree folder is not configured.'), 409
+
+        archive_url = 'https://api.github.com/repos/{}/{}/zipball/{}'.format(
+            urllib.parse.quote(owner, safe=''),
+            urllib.parse.quote(repository, safe=''),
+            urllib.parse.quote(reference, safe=''),
+        )
+        try:
+            with tempfile.TemporaryDirectory(prefix='vizanti_bt_pull_') as staging:
+                archive_path = Path(staging) / 'repository.zip'
+                request_headers = {'User-Agent': 'Vizanti-BT-Manager'}
+                download_request = urllib.request.Request(archive_url, headers=request_headers)
+                with urllib.request.urlopen(download_request) as response, archive_path.open('wb') as output:
+                    shutil.copyfileobj(response, output)
+                extract_path = Path(staging) / 'repository'
+                with zipfile.ZipFile(archive_path) as archive:
+                    for member in archive.infolist():
+                        member_path = Path(member.filename)
+                        if member_path.is_absolute() or '..' in member_path.parts:
+                            raise ValueError('The GitHub archive contains an unsafe path.')
+                    archive.extractall(extract_path)
+
+                roots = [path for path in extract_path.iterdir() if path.is_dir()]
+                if len(roots) != 1:
+                    raise ValueError('The GitHub archive has an unexpected structure.')
+                source_root = roots[0] / subdirectory if subdirectory else roots[0]
+                if not source_root.is_dir():
+                    raise ValueError('The repository subdirectory was not found.')
+
+                copied = 0
+                conflicts = []
+                for source_file in source_root.rglob('*.xml'):
+                    relative_path = source_file.relative_to(source_root)
+                    destination_file = self.xml_root / relative_path
+                    destination_file.parent.mkdir(parents=True, exist_ok=True)
+                    relative_name = relative_path.as_posix()
+                    should_overwrite = overwrite is True or relative_name in overwrite_paths
+                    if destination_file.exists() and not should_overwrite:
+                        conflicts.append(relative_name)
+                    else:
+                        shutil.copy2(source_file, destination_file)
+                        copied += 1
+                return jsonify(root=str(self.xml_root), copied=copied, conflicts=sorted(conflicts))
+        except (OSError, urllib.error.URLError, zipfile.BadZipFile, ValueError) as error:
+            return jsonify(error=f'Unable to pull GitHub behavior trees: {error}'), 400
 
     def list_files(self):
         if self.xml_root is None:
@@ -211,6 +289,7 @@ def register_routes(app, base_url, bt_file_manager):
     catalog_path = Path(app.static_folder) / 'templates' / 'btmanager' / 'nav2_catalog.json'
     app.add_url_rule(base_url + '/bt/catalog', 'get_bt_catalog', lambda: bt_file_manager.get_catalog(catalog_path))
     app.add_url_rule(base_url + '/bt/configure', 'configure_bt_root', bt_file_manager.configure_root, methods=['POST'])
+    app.add_url_rule(base_url + '/bt/github/pull', 'pull_bt_github', bt_file_manager.pull_github, methods=['POST'])
     app.add_url_rule(base_url + '/bt/files', 'list_bt_files', bt_file_manager.list_files)
     app.add_url_rule(base_url + '/bt/file/<path:relative_path>', 'get_bt_file', bt_file_manager.get_file)
     app.add_url_rule(base_url + '/bt/file', 'create_bt_file', bt_file_manager.create_file, methods=['POST'])

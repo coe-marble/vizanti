@@ -26,6 +26,13 @@ find_package(visualization_msgs REQUIRED)
 install(DIRECTORY
   launch
   assets
+  tests/
+  DESTINATION share/${PROJECT_NAME}/behavior_trees
+)
+
+install(DIRECTORY
+  launch
+  assets
   DESTINATION share/${PROJECT_NAME}/
 )
 

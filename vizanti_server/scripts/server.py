@@ -6,6 +6,7 @@ import logging
 import json
 import gzip
 import hashlib
+import shutil
 import rclpy
 
 from flask import Flask, render_template, send_from_directory, make_response, request
@@ -25,6 +26,12 @@ param_port = 5000
 param_port_rosbridge = 5001
 param_compression = "none"
 param_default_widget_config = ""
+param_behavior_tree_folder = os.path.join(
+	os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
+	"vizanti/btmanager/behavior_trees",
+)
+param_copy_demo_trees = False
+param_demo_behavior_tree_source = ""
 bt_file_manager = BtFileManager()
 
 def get_public_dir():
@@ -125,6 +132,18 @@ def list_robot_model_files():
 def get_default_widget_config():
 	return get_file(param_default_widget_config)
 
+def copy_demo_trees(destination, source):
+	os.makedirs(destination, exist_ok=True)
+	for root, _, files in os.walk(source):
+		relative_root = os.path.relpath(root, source)
+		destination_root = destination if relative_root == '.' else os.path.join(destination, relative_root)
+		os.makedirs(destination_root, exist_ok=True)
+		for filename in files:
+			source_file = os.path.join(root, filename)
+			destination_file = os.path.join(destination_root, filename)
+			if not os.path.exists(destination_file):
+				shutil.copy2(source_file, destination_file)
+
 def list_ros_launch_params():
 	params = {
 		"port": param_port,
@@ -217,6 +236,7 @@ class ServerThread(threading.Thread):
 
 def main(args=None):
 	global node, param_base_url, param_port, param_port_rosbridge, param_compression, param_default_widget_config
+	global param_behavior_tree_folder, param_copy_demo_trees, param_demo_behavior_tree_source
 
 	rclpy.init(args=args)
 	node = rclpy.create_node('vizanti_flask_node')
@@ -228,6 +248,9 @@ def main(args=None):
 	node.declare_parameter('base_url', param_base_url)
 	node.declare_parameter('compression', param_compression)
 	node.declare_parameter('default_widget_config',param_default_widget_config)
+	node.declare_parameter('behavior_tree_folder', param_behavior_tree_folder)
+	node.declare_parameter('copy_demo_trees', param_copy_demo_trees)
+	node.declare_parameter('demo_behavior_tree_source', param_demo_behavior_tree_source)
 
 	param_host = node.get_parameter('host').value
 	param_port = node.get_parameter('port').value
@@ -235,6 +258,19 @@ def main(args=None):
 	param_base_url = node.get_parameter('base_url').value
 	param_compression = node.get_parameter('compression').value
 	param_default_widget_config = node.get_parameter('default_widget_config').value
+	param_behavior_tree_folder = os.path.expanduser(node.get_parameter('behavior_tree_folder').value)
+	param_copy_demo_trees = node.get_parameter('copy_demo_trees').value
+	param_demo_behavior_tree_source = os.path.expanduser(node.get_parameter('demo_behavior_tree_source').value)
+	os.makedirs(param_behavior_tree_folder, exist_ok=True)
+	bt_file_manager.set_root(param_behavior_tree_folder)
+
+	if param_copy_demo_trees:
+		if not param_demo_behavior_tree_source:
+			param_demo_behavior_tree_source = os.path.join(
+				get_package_share_directory('vizanti_demos'), 'behavior_trees')
+		copy_demo_trees(param_behavior_tree_folder, param_demo_behavior_tree_source)
+		node.get_logger().info(
+			f"Demo behavior trees copied to {param_behavior_tree_folder}")
 
 	if param_default_widget_config != "":
 		param_default_widget_config = os.path.expanduser(param_default_widget_config)
