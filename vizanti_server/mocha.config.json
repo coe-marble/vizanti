@@ -1,0 +1,5 @@
+{
+  "spec": "test/templates/test_*.mjs",
+  "timeout": 5000,
+  "exit": true
+}

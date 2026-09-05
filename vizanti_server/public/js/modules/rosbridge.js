@@ -95,7 +95,6 @@ class Rosbridge {
 			name : '/rosapi/services',
 			serviceType : 'rosapi/Services',
 		});
-		
 		this.services_for_type_client = new ROSLIB.Service({
 			ros : this.ros,
 			name : '/rosapi/services_for_type',

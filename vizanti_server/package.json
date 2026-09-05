@@ -1,0 +1,12 @@
+{
+  "name": "vizanti-server-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "mocha --config mocha.config.json",
+    "test:plugins": "mocha --config mocha.config.json test/templates/test_*.mjs"
+  },
+  "devDependencies": {
+    "mocha": "^8.4.0"
+  }
+}
