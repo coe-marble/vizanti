@@ -1,6 +1,5 @@
 
 let viewModule = await import(`${base_url}/js/modules/view.js`);
-let tfModule = await import(`${base_url}/js/modules/tf.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let pathsModule = await import(`${base_url}/assets/robot_model/paths`);
@@ -9,14 +8,14 @@ let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_servic
 let adapterConfigurationEditorModule = await import(`${base_url}/js/modules/adapter_configuration_editor.js`);
 
 let view = viewModule.view;
-let tf = tfModule.tf;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 let paths = pathsModule.default;
-let applyRotation = tfModule.applyRotation;
 let selectVehicle = vehicleSelectionModule.selectVehicle;
 let registerVehicle = vehicleSelectionModule.registerVehicle;
 let endpointService = endpointServiceModule.endpointService;
+let tf = endpointService.getTf();
+let applyRotation = endpointService.applyRotation.bind(endpointService);
 let createAdapterConfigurationEditor = adapterConfigurationEditorModule.createAdapterConfigurationEditor;
 
 let models = {};
@@ -98,7 +97,7 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	lengthSelector.value = length;
 	robotName.value = loaded_data.robotName ?? "";
 	adapterConfiguration = loaded_data.adapter_configuration ?? {
-		adapterId: "local-ros2",
+		adapterId: "ros2",
 		values: {
 			namespace: loaded_data.namespace ?? "",
 			tfFrame: loaded_data.frame ?? frame,

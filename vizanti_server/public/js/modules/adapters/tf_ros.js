@@ -1,4 +1,5 @@
-import { rosbridge } from './rosbridge.js';
+// ROS-specific TF transport and transform cache. The ROS2 adapter constructs
+// this implementation and exposes it through the endpoint service.
 
 export function applyRotation(vector, r, inverse) {
 	if (inverse)
@@ -6,6 +7,10 @@ export function applyRotation(vector, r, inverse) {
 
 	const v = r.rotateVector([vector.x, vector.y, vector.z]);
 	return { x: v[0], y: v[1], z: v[2] };
+}
+
+export function createRosTf({ ROSLIB, ros, compression = "none" }) {
+	return new TFRos({ ROSLIB, ros, compression });
 }
 
 // Fixed-size ring buffer storing { secs, nsecs, transform } entries per frame.
@@ -53,8 +58,12 @@ class TransformRingBuffer {
 	}
 }
 
-export class TF {
-	constructor() {
+export class TFRos {
+	constructor({ ROSLIB, ros, compression = "none" }) {
+		if (!ROSLIB || typeof ROSLIB.Topic !== "function" || !ros) {
+			throw new TypeError("ROS TF requires a ROSLIB Topic constructor and ROS client.");
+		}
+
 		this.fixed_frame = '';
 
 		this.transforms = {};
@@ -65,11 +74,11 @@ export class TF {
 		this.frame_headerstamps = {};
 
 		this.tf_topic = new ROSLIB.Topic({
-			ros: rosbridge.ros,
+			ros,
 			name: '/vizanti/tf_consolidated',
 			messageType: 'tf2_msgs/msg/TFMessage',
 			throttle_rate: 33,
-			compression: rosbridge.compression,
+			compression,
 			queue_length: 1
 		});
 
@@ -85,15 +94,15 @@ export class TF {
 		});
 
 		this.tf_static_topic = new ROSLIB.Topic({
-			ros: rosbridge.ros,
+			ros,
 			name: '/vizanti/tf_static_consolidated',
 			messageType: 'tf2_msgs/msg/TFMessage',
-			compression: rosbridge.compression
+			compression
 		});
 
 		this.tf_static_listener = this.tf_static_topic.subscribe((msg) => {
 			this.updateTransforms(msg.transforms);
-			
+
 		});
 
 		this.event_timestamp = performance.now();
@@ -219,7 +228,8 @@ export class TF {
 		const buf = this.absoluteTransformBuffers[header.frame_id];
 		if (!buf)
 			return this.absoluteTransforms[header.frame_id];
-		return buf.nearest(header.stamp?.secs, header.stamp?.nsecs) ?? this.absoluteTransforms[header.frame_id];
+		const stamp = header.stamp || {};
+		return buf.nearest(stamp.secs, stamp.nsecs) || this.absoluteTransforms[header.frame_id];
 	}
 
 	// Timestamp-aware drop-in for transformPose(frame, fixed_frame, position, orientation).
@@ -285,6 +295,8 @@ export class TF {
 	getTimeStampDelta(timestamp1, timestamp2) {
 		return timestamp2.sec - timestamp1.sec + ((timestamp2.nanosec - timestamp1.nanosec) / 1e9);
 	}
-}
 
-export let tf = new TF();
+	applyRotation(vector, rotation, inverse) {
+		return applyRotation(vector, rotation, inverse);
+	}
+}

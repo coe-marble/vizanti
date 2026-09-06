@@ -80,10 +80,11 @@ describe('endpoint configuration editor', function () {
 					{ id: 'endpointId', label: 'Topic', control: 'endpoint', manual: { label: 'Enter manually', placeholder: 'Topic name' } },
 				],
 				listOutputMessages: () => [{ id: 'std_msgs/msg/Float64', label: 'Float64' }],
+				allowsDiscovery: () => true,
 				async listEndpoints() { return []; },
 				createManualEndpoint(...args) {
 					manualCalls.push(args);
-					const address = args[4];
+					const address = args[5];
 					return address === '' ? null : {
 						id: address,
 						endpoint: { topic: `/robot/${address}`, nativeMessageType: 'std_msgs/msg/Float64' },
@@ -109,7 +110,7 @@ describe('endpoint configuration editor', function () {
 			await manualInput.listeners.input();
 
 			assert.deepEqual(manualCalls[manualCalls.length - 1], [
-				'ros2', {}, 'vizanti/Float', 'std_msgs/msg/Float64', 'depth_target',
+				'ros2', {}, 'topic', 'vizanti/Float', 'std_msgs/msg/Float64', 'depth_target', {},
 			]);
 			assert.deepEqual(editor.value.endpoint, {
 				topic: '/robot/depth_target', nativeMessageType: 'std_msgs/msg/Float64',
@@ -128,6 +129,7 @@ describe('endpoint configuration editor', function () {
 					{ id: 'endpointId', label: 'Topic', control: 'endpoint', manual: { label: 'Enter manually', placeholder: 'Topic name' } },
 				],
 				listOutputMessages: () => [{ id: 'std_msgs/msg/Float64', label: 'Float64' }],
+				allowsDiscovery: () => true,
 				async listEndpoints() { return []; },
 			};
 			const savedEndpoint = {
@@ -164,8 +166,15 @@ describe('endpoint configuration editor', function () {
 				configurationFields: () => [],
 				endpointFields: () => [
 					{ id: 'serviceType', label: 'Service Type', control: 'text', placeholder: 'package_name/srv/Service' },
-					{ id: 'serviceName', label: 'Service Name', control: 'text', placeholder: '/service_name' },
+					{ id: 'endpointId', label: 'Service', control: 'endpoint', manual: { label: 'Enter manually', placeholder: 'Service name' } },
 				],
+				allowsDiscovery: () => false,
+				createManualEndpoint(adapterId, adapterValues, endpointType, guiMessageType, outputMessageId, address, endpointValues) {
+					return address === '' || endpointValues.serviceType === '' ? null : {
+						id: address,
+						endpoint: { service: address, serviceType: endpointValues.serviceType },
+					};
+				},
 			};
 			const container = document.createElement('div');
 			const editor = createEndpointConfigurationEditor({
@@ -175,15 +184,17 @@ describe('endpoint configuration editor', function () {
 				endpointType: 'service',
 				configuration: {
 					adapterId: 'ros2', adapterValues: {},
-					serviceType: 'std_srvs/srv/Trigger', serviceName: '/reset',
+					endpointValues: { serviceType: 'std_srvs/srv/Trigger' },
+					manualEndpointId: '/reset',
 				},
 			});
 			await editor.refresh();
 
 			const labels = created.filter((element) => element.tagName === 'label').map((element) => element.textContent);
-			assert.deepEqual(labels, ['Adapter:', 'Service Type:', 'Service Name:']);
+			assert.deepEqual(labels, ['Adapter:', 'Service Type:', 'Service:']);
 			assert.equal(created.find((element) => element.placeholder === 'package_name/srv/Service').value, 'std_srvs/srv/Trigger');
-			assert.equal(created.find((element) => element.placeholder === '/service_name').value, '/reset');
+			assert.equal(created.find((element) => element.placeholder === 'Service name').value, '/reset');
+			assert.deepEqual(editor.value.endpoint, { service: '/reset', serviceType: 'std_srvs/srv/Trigger' });
 			assert.equal(editor.value.endpointType, 'service');
 		});
 	});
@@ -202,6 +213,7 @@ describe('endpoint configuration editor', function () {
 					{ id: 'endpointId', label: 'Topic', control: 'endpoint', manual: { label: 'Enter manually', placeholder: 'Topic name' } },
 				],
 				listOutputMessages: () => [{ id: 'geometry_msgs/msg/PoseStamped', label: 'PoseStamped' }],
+				allowsDiscovery: () => true,
 				async listEndpoints() { discoveryCalls += 1; return []; },
 			};
 			const container = document.createElement('div');
@@ -252,7 +264,7 @@ describe('endpoint configuration editor', function () {
 			assert.equal(discoveryCalls, 3);
 			assert.deepEqual(configuration.value.endpointConfiguration, {
 				outputMessageId: 'geometry_msgs/msg/PoseStamped',
-				endpointMode: 'select', endpointId: '/alpha/goal', endpoint,
+				endpointMode: 'select', endpointId: '/alpha/goal', endpoint, endpointValues: {},
 			});
 			assert.deepEqual(configuration.activeConfiguration, {
 				...configuration.value.endpointConfiguration,

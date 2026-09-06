@@ -11,7 +11,7 @@ describe('scan plugin', function () {
     subscriptionCases('scan', 'range_topic', 'sensor_msgs/msg/LaserScan', labels);
     function arrange() {
         const ctx = loadFunctions('scan', ['connect', 'radToDeg'], environment({ ...labels(), range_topic: undefined,
-            data: undefined, drawScan: spy(), tfModule: { applyRotation: point => point },
+			data: undefined, drawScan: spy(), endpointService: { applyRotation: point => point },
             tf: { fixed_frame: 'map', getAbsoluteTransform: () => ({ rotation: {} }) },
         }));
         ctx.connect(); return ctx;

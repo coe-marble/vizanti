@@ -88,7 +88,7 @@ describe('altimeter plugin', function () {
 
 	function endpointContext(overrides = {}) {
 		const manualConfiguration = {
-			adapterId: 'local-ros2',
+			adapterId: 'ros2',
 			adapterValues: { namespace: '/alpha', tfFrame: 'alpha/base_link' },
 			outputMessageId: 'std_msgs/msg/Float64',
 			endpointId: '/alpha/depth_target',
@@ -156,14 +156,14 @@ describe('altimeter plugin', function () {
 			endpointConfigurationEditor: {
 				activeConfiguration: {
 					...robotEndpoint,
-					adapterId: 'local-ros2',
+					adapterId: 'ros2',
 					adapterValues: { namespace: '/alpha', tfFrame: 'alpha/base_link' },
 				},
 			},
 		});
 		assert.deepStrictEqual(plain(ctx.activeEndpointConfiguration()), {
 			...robotEndpoint,
-			adapterId: 'local-ros2',
+			adapterId: 'ros2',
 			adapterValues: { namespace: '/alpha', tfFrame: 'alpha/base_link' },
 		});
 	});

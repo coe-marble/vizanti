@@ -10,7 +10,7 @@ describe('range plugin', function () {
     subscriptionCases('range', 'range_topic', 'sensor_msgs/msg/Range');
     function arrange() {
         const env = environment({ range_topic: undefined, data: {}, drawRanges: spy(),
-            RADIATION_TYPE: ['ULTRASOUND', 'INFRARED'], tfModule: { applyRotation: point => point },
+			RADIATION_TYPE: ['ULTRASOUND', 'INFRARED'], endpointService: { applyRotation: point => point },
             tf: { fixed_frame: 'map', getAbsoluteTransform: () => ({ rotation: {} }) },
         });
         for (const key of ['range', 'min', 'max', 'fov', 'type']) env[`text_${key}`] = element();

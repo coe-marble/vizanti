@@ -1,5 +1,4 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
-let tfModule = await import(`${base_url}/js/modules/tf.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
@@ -8,10 +7,10 @@ let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configu
 let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
 
 let view = viewModule.view;
-let tf = tfModule.tf;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 let endpointService = endpointServiceModule.endpointService;
+let tf = endpointService.getTf();
 let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
 let guiMessages = guiMessagesModule;
 

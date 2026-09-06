@@ -11,7 +11,7 @@ function loadAdapter(ROSLIB, rosbridge) {
 		.replace(/export const /g, 'const ')
 		.replace(/export function /g, 'function ')
 		.concat('\nglobalThis.adapterExports = { createRos2Adapter, localRos2Instance };');
-	const context = vm.createContext({ ROSLIB, rosbridge, assertAdapterContract, ENDPOINT_TYPE, GUI_MESSAGE_TYPE, createFloat });
+	const context = vm.createContext({ ROSLIB, rosbridge, createRosTf: () => ({}), assertAdapterContract, ENDPOINT_TYPE, GUI_MESSAGE_TYPE, createFloat });
 	new vm.Script(source, { filename: url.pathname }).runInContext(context);
 	return context.adapterExports;
 }
@@ -36,13 +36,15 @@ describe('ROS2 adapter', function () {
 		const bridge = {
 			ros: { id: 'bridge' },
 			async get_all_topics() { return topicCatalog; },
+			async get_services() { return ['/reset']; },
 		};
 		const { createRos2Adapter, localRos2Instance } = loadAdapter(ROSLIB, bridge);
-		const adapter = createRos2Adapter({ ROSLIB, getClient(instance) {
+		const tf = {};
+		const adapter = createRos2Adapter({ ROSLIB, createTf: () => tf, getClient(instance) {
 			assert.strictEqual(instance, localRos2Instance);
 			return bridge;
 		} });
-		return { adapter, localRos2Instance, topics, services };
+		return { adapter, localRos2Instance, topics, services, tf };
 	}
 
 	it('declares namespace and TF frame as its configuration fields', function () {
@@ -68,8 +70,21 @@ describe('ROS2 adapter', function () {
 			adapter.endpointFields(ENDPOINT_TYPE.SERVICE, GUI_MESSAGE_TYPE.FLOAT),
 		)), [
 			{ id: 'serviceType', label: 'Service Type', control: 'text', placeholder: 'package_name/srv/Service' },
-			{ id: 'serviceName', label: 'Service Name', control: 'text', placeholder: '/service_name' },
+			{ id: 'endpointId', label: 'Service', control: 'endpoint', manual: { label: 'Enter manually', placeholder: 'Service name' } },
 		]);
+	});
+
+	it('declares discovery support independently from endpoint fields', function () {
+		const { adapter } = arrange();
+		assert.equal(adapter.allowsDiscovery(ENDPOINT_TYPE.TOPIC, GUI_MESSAGE_TYPE.FLOAT), true);
+		assert.equal(adapter.allowsDiscovery(ENDPOINT_TYPE.SERVICE, GUI_MESSAGE_TYPE.FLOAT), true);
+		assert.equal(adapter.allowsDiscovery(ENDPOINT_TYPE.TOPIC, GUI_MESSAGE_TYPE.BOOL), false);
+	});
+
+	it('creates and reuses the ROS TF service', function () {
+		const { adapter, localRos2Instance, tf } = arrange();
+		assert.strictEqual(adapter.getTf(localRos2Instance), tf);
+		assert.strictEqual(adapter.getTf(localRos2Instance), tf);
 	});
 
 	it('limits endpoint choices to the configured namespace', async function () {
@@ -78,7 +93,8 @@ describe('ROS2 adapter', function () {
 			types: ['std_msgs/msg/Float64', 'std_msgs/msg/Float64'],
 		});
 		const endpoints = await adapter.listEndpoints(
-			localRos2Instance, { namespace: '/alpha' }, GUI_MESSAGE_TYPE.FLOAT, 'std_msgs/msg/Float64',
+			localRos2Instance, { namespace: '/alpha' }, ENDPOINT_TYPE.TOPIC,
+			GUI_MESSAGE_TYPE.FLOAT, 'std_msgs/msg/Float64', {},
 		);
 		assert.deepEqual(JSON.parse(JSON.stringify(endpoints.map((endpoint) => endpoint.id))), ['/alpha/altitude']);
 	});
@@ -86,13 +102,25 @@ describe('ROS2 adapter', function () {
 	it('turns a manually entered relative address into a namespaced endpoint', function () {
 		const { adapter, localRos2Instance } = arrange();
 		const endpoint = adapter.createManualEndpoint(
-			localRos2Instance, { namespace: '/alpha' }, GUI_MESSAGE_TYPE.FLOAT,
-			'std_msgs/msg/Float64', 'depth_target',
+			localRos2Instance, { namespace: '/alpha' }, ENDPOINT_TYPE.TOPIC,
+			GUI_MESSAGE_TYPE.FLOAT, 'std_msgs/msg/Float64', 'depth_target', {},
 		);
 		assert.deepEqual(JSON.parse(JSON.stringify(endpoint)), {
 			id: 'depth_target',
 			label: 'depth_target',
 			endpoint: { topic: '/alpha/depth_target', nativeMessageType: 'std_msgs/msg/Float64' },
+		});
+	});
+
+	it('turns a manually entered service into a concrete ROS endpoint', function () {
+		const { adapter, localRos2Instance } = arrange();
+		const endpoint = adapter.createManualEndpoint(
+			localRos2Instance, { namespace: '/alpha' }, ENDPOINT_TYPE.SERVICE,
+			undefined, '', 'reset', { serviceType: 'std_srvs/srv/Trigger' },
+		);
+		assert.deepEqual(JSON.parse(JSON.stringify(endpoint)), {
+			id: 'reset', label: 'reset',
+			endpoint: { service: '/alpha/reset', serviceType: 'std_srvs/srv/Trigger' },
 		});
 	});
 

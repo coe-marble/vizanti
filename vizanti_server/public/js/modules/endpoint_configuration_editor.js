@@ -67,6 +67,7 @@ export function createEndpointConfigurationEditor({
 			endpointType,
 			adapterId: currentAdapterId(),
 			adapterValues: { ...(currentAdapterValues() || {}) },
+			endpointValues: { ...(value.endpointValues || {}) },
 		};
 	}
 
@@ -121,6 +122,21 @@ export function createEndpointConfigurationEditor({
 		return endpointFields().some((field) => field.control === "message");
 	}
 
+	function allowsDiscovery() {
+		return endpointService.allowsDiscovery(currentAdapterId(), endpointType, guiMessageType);
+	}
+
+	function endpointValue(field) {
+		const values = value.endpointValues || {};
+		if (values[field.id] !== undefined) {
+			return values[field.id];
+		}
+		if (value[field.id] !== undefined) {
+			return value[field.id];
+		}
+		return field.defaultValue || "";
+	}
+
 	function renderEndpointFields() {
 		endpointFieldsContainer.innerHTML = "";
 		for (const field of endpointFields()) {
@@ -130,10 +146,23 @@ export function createEndpointConfigurationEditor({
 			}
 
 			if (field.control === "endpoint") {
-				addField(`${field.label}:`, endpoint, endpointFieldsContainer);
-				if (!field.manual) continue;
+				const canDiscover = allowsDiscovery();
+				if (canDiscover) {
+					addField(`${field.label}:`, endpoint, endpointFieldsContainer);
+				}
+				if (!field.manual) {
+					if (!canDiscover) {
+						throw new TypeError("An adapter without endpoint discovery must provide a manual endpoint field.");
+					}
+					continue;
+				}
 
 				manualEndpointInput.placeholder = field.manual.placeholder || "";
+				if (!canDiscover) {
+					addField(`${field.label}:`, manualEndpointInput, endpointFieldsContainer);
+					continue;
+				}
+
 				const manualToggleLabel = document.createElement("label");
 				manualToggleLabel.appendChild(manualEndpointToggle);
 				manualToggleLabel.appendChild(document.createTextNode(` ${field.manual.label}`));
@@ -149,10 +178,17 @@ export function createEndpointConfigurationEditor({
 				const input = document.createElement("input");
 				input.type = "text";
 				input.placeholder = field.placeholder || "";
-				input.value = value[field.id] || field.defaultValue || "";
-				input.addEventListener("input", () => {
-					value = { ...value, [field.id]: input.value };
-					emitChange();
+				input.value = endpointValue(field);
+				input.addEventListener("input", async () => {
+					value = {
+						...value,
+						endpointValues: { ...value.endpointValues, [field.id]: input.value },
+					};
+					if (hasEndpointControl()) {
+						await refreshEndpoints();
+					} else {
+						emitChange();
+					}
 				});
 				addField(`${field.label}:`, input, endpointFieldsContainer);
 				continue;
@@ -163,9 +199,10 @@ export function createEndpointConfigurationEditor({
 	}
 
 	function renderManualEndpointInput() {
-		const manual = value.endpointMode === "manual";
+		const manual = !allowsDiscovery() || value.endpointMode === "manual";
 		manualEndpointToggle.checked = manual;
-		manualEndpointInput.hidden = !manual;
+		manualEndpointToggle.hidden = !allowsDiscovery();
+		manualEndpointInput.hidden = allowsDiscovery() && !manual;
 		endpoint.disabled = manual;
 		manualEndpointInput.value = value.manualEndpointId || "";
 	}
@@ -173,7 +210,8 @@ export function createEndpointConfigurationEditor({
 	async function applyManualEndpoint() {
 		const endpointId = manualEndpointInput.value.trim();
 		const created = endpointService.createManualEndpoint(
-			currentAdapterId(), currentAdapterValues(), guiMessageType, value.outputMessageId, endpointId,
+			currentAdapterId(), currentAdapterValues(), endpointType, guiMessageType,
+			value.outputMessageId, endpointId, value.endpointValues || {},
 		);
 		value = {
 			...value,
@@ -189,8 +227,15 @@ export function createEndpointConfigurationEditor({
 		if (!hasEndpointControl()) {
 			return;
 		}
+		if (!allowsDiscovery()) {
+			value = { ...value, endpointMode: "manual" };
+			renderManualEndpointInput();
+			await applyManualEndpoint();
+			return;
+		}
 		const choices = await endpointService.listEndpoints(
-			currentAdapterId(), currentAdapterValues(), guiMessageType, value.outputMessageId,
+			currentAdapterId(), currentAdapterValues(), endpointType, guiMessageType,
+			value.outputMessageId, value.endpointValues || {},
 		);
 		if (value.endpointMode === "manual") {
 			renderOptions(endpoint, choices, "", "(Disabled)");
@@ -242,12 +287,13 @@ export function createEndpointConfigurationEditor({
 			}
 			value = { ...(value || {}), adapterId: fixedAdapter.adapterId, adapterValues: { ...fixedAdapter.values } };
 		} else {
-			const adapters = endpointService.listAdapters(guiMessageType);
+			const adapters = endpointService.listAdapters(guiMessageType, endpointType);
 			if (!value || !adapters.some((item) => item.id === value.adapterId)) {
 				const adapterId = adapters[0] ? adapters[0].id : "";
 				value = {
 					adapterId,
 					adapterValues: defaults(adapterId),
+					endpointValues: {},
 					outputMessageId: "",
 					endpointId: "",
 					endpoint: null,
@@ -268,6 +314,7 @@ export function createEndpointConfigurationEditor({
 			value = {
 				adapterId: adapter.value,
 				adapterValues: defaults(adapter.value),
+				endpointValues: {},
 				outputMessageId: "",
 				endpointId: "",
 				endpoint: null,
@@ -287,7 +334,8 @@ export function createEndpointConfigurationEditor({
 	});
 	endpoint.addEventListener("change", async () => {
 		const choices = await endpointService.listEndpoints(
-			currentAdapterId(), currentAdapterValues(), guiMessageType, value.outputMessageId,
+			currentAdapterId(), currentAdapterValues(), endpointType, guiMessageType,
+			value.outputMessageId, value.endpointValues || {},
 		);
 		const selected = choices.find((choice) => choice.id === endpoint.value);
 		value = {

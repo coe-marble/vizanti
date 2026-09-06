@@ -1,12 +1,13 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
-let tfModule = await import(`${base_url}/js/modules/tf.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
 let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
 let view = viewModule.view;
-let tf = tfModule.tf;
+let endpointService = endpointServiceModule.endpointService;
+let tf = endpointService.getTf();
 let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
@@ -223,7 +224,7 @@ function connect(){
 		msg.ranges.forEach(function (item, index) {
 			if (item >= msg.range_min && item <= msg.range_max) {
 				const angle = msg.angle_min + index * msg.angle_increment;
-				rotatedPointCloud.push(tfModule.applyRotation(
+				rotatedPointCloud.push(endpointService.applyRotation(
 					{
 						x: item * Math.cos(angle), 
 						y: item * Math.sin(angle), 

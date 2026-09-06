@@ -1,17 +1,24 @@
-// Every adapter represents one protocol. An adapter configuration identifies
-// one use of that protocol, such as a ROS2 namespace or a remote server.
-// Endpoint fields and native message formats remain owned by the adapter.
+// Every adapter represents one protocol. The endpoint service registers each
+// adapter under its adapterId, such as "ros2". Endpoint fields and native
+// message formats remain owned by the adapter.
 //
 // Adapter methods:
 // - configurationFields() describes the fields needed to configure the adapter
 // - endpointFields(endpointType, guiMessageType) describes the fields needed
 //   by a plugin endpoint. The editor currently supports `message`, `endpoint`,
 //   and `text` controls.
+// - allowsDiscovery(endpointType, guiMessageType) declares whether the adapter
+//   can discover endpoints for that operation. When false, the editor renders
+//   only the adapter's manual endpoint input.
 // - listOutputMessages(guiMessageType) resolves native format choices
-// - listEndpoints(instance, configuration, guiMessageType) resolves endpoints
-// - createManualEndpoint(instance, configuration, guiMessageType, outputMessageId, address)
-//   converts manually entered text into an adapter-native endpoint
-// - restoreEndpoint(instance, configuration, guiMessageType, endpointId) restores an endpoint
+// - listEndpoints(instance, configuration, endpointType, guiMessageType,
+//   outputMessageId, endpointValues) resolves endpoints
+// - createManualEndpoint(instance, configuration, endpointType, guiMessageType,
+//   outputMessageId, address, endpointValues) converts manually entered text
+//   into an adapter-native endpoint
+// - restoreEndpoint(instance, configuration, endpointType, guiMessageType,
+//   outputMessageId, endpointId, endpointValues) restores an endpoint
+// - getTf(instance) returns the adapter's transform service
 // - subscribe(instance, configuration, endpoint, guiMessageType, onMessage) returns { unsubscribe() }
 // - publish(instance, configuration, endpoint, guiMessage) sends one GUI message
 // - call(instance, configuration, endpoint, request) resolves with one response
@@ -24,6 +31,9 @@ export const ENDPOINT_TYPE = Object.freeze({
 export const ADAPTER_OPERATION = Object.freeze({
 	CONFIGURATION_FIELDS: "configurationFields",
 	ENDPOINT_FIELDS: "endpointFields",
+	SUPPORTS: "supports",
+	ALLOWS_DISCOVERY: "allowsDiscovery",
+	GET_TF: "getTf",
 	SUBSCRIBE: "subscribe",
 	PUBLISH: "publish",
 	CALL: "call",

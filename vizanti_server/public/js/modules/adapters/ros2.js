@@ -2,6 +2,7 @@ import '../../lib/roslib.min.js';
 import { rosbridge } from '../rosbridge.js';
 import { ENDPOINT_TYPE, assertAdapterContract } from './contract.js';
 import { GUI_MESSAGE_TYPE, createFloat, createPose } from '../gui_messages.js';
+import { createRosTf } from './tf_ros.js';
 
 const floatMappings = Object.freeze({
 	"std_msgs/msg/Float32": Object.freeze({
@@ -66,12 +67,12 @@ function belongsToNamespace(topic, configuration) {
 	return namespace === "" || topic === namespace || topic.startsWith(`${namespace}/`);
 }
 
-function resolveTopicAddress(address, configuration) {
-	const topic = typeof address === "string" ? address.trim() : "";
-	if (topic === "") return "";
-	if (topic.startsWith("/")) return topic;
+function resolveEndpointAddress(address, configuration) {
+	const endpoint = typeof address === "string" ? address.trim() : "";
+	if (endpoint === "") return "";
+	if (endpoint.startsWith("/")) return endpoint;
 	const namespace = normalizedNamespace(configuration);
-	return namespace === "" ? `/${topic}` : `${namespace}/${topic}`;
+	return namespace === "" ? `/${endpoint}` : `${namespace}/${endpoint}`;
 }
 
 function requireEndpointString(endpoint, field) {
@@ -110,21 +111,22 @@ function createServiceOptions(client, endpoint) {
 	};
 }
 
-// The current dashboard has one ROS2 bridge. Keeping this instance explicit
-// lets future plugins select another configured adapter instance without
-// changing their endpoint fields.
+// The current dashboard has one ROS2 adapter.
 export const localRos2Instance = Object.freeze({
-	id: "local-ros2",
-	adapterId: "ros2",
+	id: "ros2",
 });
 
-export function createRos2Adapter({ ROSLIB: roslib, getClient }) {
+export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 	if (!roslib || typeof roslib.Topic !== "function" || typeof roslib.Service !== "function") {
 		throw new TypeError("ROS2 adapter requires ROSLIB Topic and Service constructors.");
 	}
 	if (typeof getClient !== "function") {
 		throw new TypeError("ROS2 adapter requires a client resolver.");
 	}
+	if (typeof createTf !== "function") {
+		throw new TypeError("ROS2 adapter requires a TF service factory.");
+	}
+	let tf = null;
 
 	return assertAdapterContract({
 		id: "ros2",
@@ -154,7 +156,10 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient }) {
 			if (endpointType === ENDPOINT_TYPE.SERVICE) {
 				return [
 					{ id: "serviceType", label: "Service Type", control: "text", placeholder: "package_name/srv/Service" },
-					{ id: "serviceName", label: "Service Name", control: "text", placeholder: "/service_name" },
+					{
+						id: "endpointId", label: "Service", control: "endpoint",
+						manual: { label: "Enter manually", placeholder: "Service name" },
+					},
 				];
 			}
 
@@ -171,15 +176,38 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient }) {
 			];
 		},
 
+		allowsDiscovery(endpointType, guiMessageType) {
+			return endpointType === ENDPOINT_TYPE.SERVICE
+				|| (endpointType === ENDPOINT_TYPE.TOPIC && this.supports(guiMessageType));
+		},
+
+		getTf(instance) {
+			if (!tf) {
+				const client = getClient(instance);
+				tf = createTf({ ROSLIB: roslib, ros: client.ros, compression: client.compression });
+			}
+			return tf;
+		},
+
 		listOutputMessages(guiMessageType) {
 			const mappings = mappingsFor(guiMessageType);
 			return mappings ? Object.keys(mappings).map((id) => ({ id, label: id })) : [];
 		},
 
-		async listEndpoints(instance, configuration, guiMessageType, outputMessageId) {
-			if (!this.supports(guiMessageType)) {
-				return [];
+		async listEndpoints(instance, configuration, endpointType, guiMessageType, outputMessageId, endpointValues) {
+			if (endpointType === ENDPOINT_TYPE.SERVICE) {
+				const serviceType = endpointValues && typeof endpointValues.serviceType === "string"
+					? endpointValues.serviceType.trim() : "";
+				if (serviceType === "") return [];
+				const services = await getClient(instance).get_services(serviceType);
+				return services.filter((service) => belongsToNamespace(service, configuration)).map((service) => ({
+					id: service,
+					label: service,
+					endpoint: { service, serviceType },
+				}));
 			}
+
+			if (endpointType !== ENDPOINT_TYPE.TOPIC || !this.supports(guiMessageType)) return [];
 			const result = await getClient(instance).get_all_topics();
 			const mappings = mappingsFor(guiMessageType);
 			if (!mappings[outputMessageId]) return [];
@@ -191,9 +219,21 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient }) {
 				.filter((endpoint) => belongsToNamespace(endpoint.id, configuration));
 		},
 
-		createManualEndpoint(instance, configuration, guiMessageType, outputMessageId, address) {
-			const mappings = mappingsFor(guiMessageType);
+		createManualEndpoint(instance, configuration, endpointType, guiMessageType, outputMessageId, address, endpointValues) {
 			const endpointId = typeof address === "string" ? address.trim() : "";
+			if (endpointType === ENDPOINT_TYPE.SERVICE) {
+				const serviceType = endpointValues && typeof endpointValues.serviceType === "string"
+					? endpointValues.serviceType.trim() : "";
+				if (endpointId === "" || serviceType === "") return null;
+				return {
+					id: endpointId,
+					label: endpointId,
+					endpoint: { service: resolveEndpointAddress(endpointId, configuration), serviceType },
+				};
+			}
+
+			if (endpointType !== ENDPOINT_TYPE.TOPIC) return null;
+			const mappings = mappingsFor(guiMessageType);
 			if (!mappings || !mappings[outputMessageId] || endpointId === "") {
 				return null;
 			}
@@ -201,17 +241,19 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient }) {
 				id: endpointId,
 				label: endpointId,
 				endpoint: {
-					topic: resolveTopicAddress(endpointId, configuration),
+					topic: resolveEndpointAddress(endpointId, configuration),
 					nativeMessageType: outputMessageId,
 				},
 			};
 		},
 
-		async restoreEndpoint(instance, configuration, guiMessageType, outputMessageId, endpointId) {
-			if (!this.supports(guiMessageType) || typeof endpointId !== "string" || endpointId === "") {
+		async restoreEndpoint(instance, configuration, endpointType, guiMessageType, outputMessageId, endpointId, endpointValues) {
+			if (typeof endpointId !== "string" || endpointId === "") {
 				return null;
 			}
-			const endpoints = await this.listEndpoints(instance, configuration, guiMessageType, outputMessageId);
+			const endpoints = await this.listEndpoints(
+				instance, configuration, endpointType, guiMessageType, outputMessageId, endpointValues,
+			);
 			return endpoints.find((endpoint) => endpoint.id === endpointId) || null;
 		},
 
@@ -260,6 +302,7 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient }) {
 
 export const ros2Adapter = createRos2Adapter({
 	ROSLIB,
+	createTf: createRosTf,
 	getClient(instance) {
 		if (!instance || instance.id !== localRos2Instance.id) {
 			throw new TypeError("Unknown ROS2 adapter instance.");

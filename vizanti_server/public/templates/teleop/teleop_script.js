@@ -2,10 +2,11 @@ let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let joystickModule = await import(`${base_url}/js/modules/joystick.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
-let tfModule = await import(`${base_url}/js/modules/tf.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
-let tf = tfModule.tf;
+let endpointService = endpointServiceModule.endpointService;
+let tf = endpointService.getTf();
 let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let nipplejs = joystickModule.nipplejs;

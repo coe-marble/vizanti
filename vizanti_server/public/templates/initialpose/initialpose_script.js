@@ -1,11 +1,12 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
-let tfModule = await import(`${base_url}/js/modules/tf.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
 let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 
 let view = viewModule.view;
-let tf = tfModule.tf;
+let endpointService = endpointServiceModule.endpointService;
+let tf = endpointService.getTf();
 let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;

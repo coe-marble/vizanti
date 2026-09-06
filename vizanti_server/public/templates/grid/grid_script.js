@@ -2,13 +2,14 @@ let viewModule = await import(`${base_url}/js/modules/view.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
-let tfModule = await import(`${base_url}/js/modules/tf.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
 
 let view = viewModule.view;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
-let tf = tfModule.tf;
-let applyRotation = tfModule.applyRotation;
+let endpointService = endpointServiceModule.endpointService;
+let tf = endpointService.getTf();
+let applyRotation = endpointService.applyRotation.bind(endpointService);
 
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),

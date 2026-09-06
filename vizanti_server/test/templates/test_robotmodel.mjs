@@ -45,7 +45,7 @@ describe('robotmodel plugin', function () {
             icon,
             robotName: element('AUV'),
             adapterConfiguration: {
-                adapterId: 'local-ros2',
+				adapterId: 'ros2',
                 values: { namespace: '/fleet/alpha', tfFrame: 'alpha/base_link' },
             },
             frame: 'alpha/base_link',
@@ -70,7 +70,7 @@ describe('robotmodel plugin', function () {
         assert.deepStrictEqual(plain(ctx.getCurrentVehicle()), {
             id: '{uniqueID}', name: 'AUV', namespace: '/fleet/alpha',
 			adapterConfiguration: {
-                adapterId: 'local-ros2',
+				adapterId: 'ros2',
                 values: { namespace: '/fleet/alpha', tfFrame: 'alpha/base_link' },
             },
 			frame: 'alpha/base_link',
