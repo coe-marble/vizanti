@@ -6,7 +6,7 @@ const templateRoot = fileURLToPath(new URL('../../public/templates/', import.met
 
 const behaviorContracts = {
 	add: [],
-	altimeter: ['std_msgs/msg/Float32'],
+	altimeter: ['endpointService.subscribe', 'endpointService.publish'],
 	area: ['geometry_msgs/msg/PolygonStamped'],
 	battery: ['sensor_msgs/msg/BatteryState'],
 	btmanager: ['/bt/files', '/bt/github/pull'],
@@ -34,7 +34,7 @@ const behaviorContracts = {
 	satelite: ['sensor_msgs/msg/NavSatFix', 'Select a vehicle'],
 	scan: ['sensor_msgs/msg/LaserScan'],
 	settings: ['fixed_frame', 'settings.save'],
-	simplegoal: ['geometry_msgs/msg/PoseStamped', 'Select a vehicle'],
+	simplegoal: ['endpointService.publish', 'createEndpointConfiguration'],
 	speedometer: ['base_link_frame', 'tf.absoluteTransforms'],
 	survey: ['nav_msgs/msg/Path', 'Select a vehicle'],
 	teleop: ['typedict[topic]', '/cmd_vel'],

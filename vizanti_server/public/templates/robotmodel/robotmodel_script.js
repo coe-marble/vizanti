@@ -5,6 +5,8 @@ let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let pathsModule = await import(`${base_url}/assets/robot_model/paths`);
 let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let adapterConfigurationEditorModule = await import(`${base_url}/js/modules/adapter_configuration_editor.js`);
 
 let view = viewModule.view;
 let tf = tfModule.tf;
@@ -14,10 +16,14 @@ let paths = pathsModule.default;
 let applyRotation = tfModule.applyRotation;
 let selectVehicle = vehicleSelectionModule.selectVehicle;
 let registerVehicle = vehicleSelectionModule.registerVehicle;
+let endpointService = endpointServiceModule.endpointService;
+let createAdapterConfigurationEditor = adapterConfigurationEditorModule.createAdapterConfigurationEditor;
 
 let models = {};
 let categorizedModels = {};
 let thumbnailCache = {};
+let adapterConfiguration = null;
+let adapterConfigurationEditor;
 
 
 // Since paths is now categorized, we need to handle it differently
@@ -50,7 +56,6 @@ const ctx = canvas.getContext('2d', { colorSpace: 'srgb' });
 
 const icon = document.getElementById("{uniqueID}_icon");
 const icon_img = icon.getElementsByTagName('img')[0];
-const frameSelector = document.getElementById("{uniqueID}_frame");
 const lengthSelector = document.getElementById("{uniqueID}_length");
 const galleryTabs = document.getElementById("{uniqueID}_gallery_tabs");
 const gallery = document.getElementById('{uniqueID}_gallery');
@@ -60,9 +65,7 @@ const offsetYSelector = document.getElementById("{uniqueID}_offset_y");
 const offsetYawSelector = document.getElementById("{uniqueID}_offset_yaw");
 
 const robotName = document.getElementById("{uniqueID}_name");
-const namespaceSelector = document.getElementById("{uniqueID}_namespace");
-const gotoTopicSelector = document.getElementById("{uniqueID}_goto_topic");
-const pathTopicSelector = document.getElementById("{uniqueID}_path_topic");
+const adapterConfigurationContainer = document.getElementById("{uniqueID}_adapter_configuration");
 
 const opacitySlider = document.getElementById('{uniqueID}_opacity');
 const opacityValue = document.getElementById('{uniqueID}_opacity_value');
@@ -75,9 +78,6 @@ offsetXSelector.addEventListener('input', saveSettings);
 offsetYSelector.addEventListener('input', saveSettings);
 offsetYawSelector.addEventListener('input', saveSettings);
 robotName.addEventListener('input', saveSettings);
-namespaceSelector.addEventListener('input', saveSettings);
-gotoTopicSelector.addEventListener('input', saveSettings);
-pathTopicSelector.addEventListener('input', saveSettings);
 lengthSelector.addEventListener('input', () => {
 	const value = parseFloat(lengthSelector.value);
 	if (!Number.isNaN(value)) {
@@ -97,9 +97,14 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	length = parseFloat(loaded_data.length) || length;
 	lengthSelector.value = length;
 	robotName.value = loaded_data.robotName ?? "";
-	namespaceSelector.value = loaded_data.namespace ?? namespaceFromFrame(frame);
-	gotoTopicSelector.value = loaded_data.goto_topic ?? "goto_point";
-	pathTopicSelector.value = loaded_data.path_topic ?? "plan";
+	adapterConfiguration = loaded_data.adapter_configuration ?? {
+		adapterId: "local-ros2",
+		values: {
+			namespace: loaded_data.namespace ?? "",
+			tfFrame: loaded_data.frame ?? frame,
+		},
+	};
+	frame = configuredFrame();
 
 	offsetXSelector.value = loaded_data.offset_x ?? 0.0;
 	offsetYSelector.value = loaded_data.offset_y ?? 0.0;
@@ -111,9 +116,6 @@ if(settings.hasOwnProperty("{uniqueID}")){
 
 	sprite = loaded_data.sprite.trim() ?? "4wd";
 }else{
-	namespaceSelector.value = namespaceFromFrame(frame);
-	gotoTopicSelector.value = "goto_point";
-	pathTopicSelector.value = "plan";
 	saveSettings();
 }
 
@@ -122,9 +124,7 @@ function saveSettings(){
 		frame: frame,
 		sprite: sprite,
 		robotName: robotName.value,
-		namespace: normalizedNamespace(),
-		goto_topic: gotoTopicSelector.value.trim(),
-		path_topic: pathTopicSelector.value.trim(),
+		adapter_configuration: adapterConfiguration,
 		opacity: opacitySlider.value,
 			length: length,
 		offset_x: offsetXSelector.value,
@@ -140,23 +140,25 @@ function saveSettings(){
 	}
 }
 
-function namespaceFromFrame(frameName) {
-	const normalizedFrame = String(frameName ?? "").replace(/^\/+|\/+$/g, "");
-	const baseFrameIndex = normalizedFrame.search(/\/(?:base_link|base_footprint|base)$/);
-	if (baseFrameIndex > 0) {
-		return `/${normalizedFrame.slice(0, baseFrameIndex)}`;
-	}
-
-	return "";
+function configuredFrame() {
+	const value = adapterConfiguration && adapterConfiguration.values
+		? adapterConfiguration.values.tfFrame : "";
+	return typeof value === "string" && value.trim() !== "" ? value.trim() : find_base_frame();
 }
 
-function normalizedNamespace() {
-	const value = namespaceSelector.value.trim().replace(/\/+$/g, "");
-	if (!value || value === "/") {
-		return "";
-	}
-
-	return value.startsWith("/") ? value : `/${value}`;
+function createAdapterEditor() {
+	adapterConfigurationEditor = createAdapterConfigurationEditor({
+		container: adapterConfigurationContainer,
+		endpointService,
+		configuration: adapterConfiguration,
+		onChange(configuration) {
+			adapterConfiguration = configuration;
+			frame = configuredFrame();
+			saveSettings();
+			drawRobot();
+		},
+	});
+	adapterConfigurationEditor.refresh();
 }
 
 function find_base_frame(){
@@ -370,46 +372,6 @@ window.addEventListener("view_changed", drawRobot);
 window.addEventListener('resize', resizeScreen);
 window.addEventListener('orientationchange', resizeScreen);
 
-// TF frame list
-function setFrameList(){
-	let framelist = "";
-	for (const key of tf.frame_list.values()) {
-		framelist += "<option value='"+key+"'>"+key+"</option>"
-	}
-	frameSelector.innerHTML = framelist;
-
-	if(tf.transforms.hasOwnProperty(frame)){
-		frameSelector.value = frame;
-	}else{
-		framelist += "<option value='"+frame+"'>"+frame+"</option>"
-		frameSelector.innerHTML = framelist
-		frameSelector.value = frame;
-	}
-
-	if(models[sprite]){
-		const element = document.getElementById("{uniqueID}_"+models[sprite].category);
-		setActiveCategory(element);
-	}
-}
-
-frameSelector.addEventListener("change", (event) => {
-	frame = frameSelector.value;
-	if (!namespaceSelector.value.trim()) {
-		namespaceSelector.value = namespaceFromFrame(frame);
-	}
-	saveSettings();
-});
-
-frameSelector.addEventListener("click", setFrameList);
-
-frameSelector.addEventListener("change", (event) =>{
-	frame = frameSelector.value;
-	drawRobot();
-	saveSettings();
-});
-
-
-
 let longPressTimer;
 let isLongPress = false;
 let isRobotFocused = false;
@@ -440,12 +402,17 @@ function registerCurrentVehicle() {
 }
 
 function getCurrentVehicle() {
+	const values = adapterConfiguration && adapterConfiguration.values
+		? adapterConfiguration.values : {};
 	return {
 		id: "{uniqueID}",
-		name: robotName.value.trim() || frame,
-		namespace: normalizedNamespace(),
-		gotoTopic: gotoTopicSelector.value.trim(),
-		pathTopic: pathTopicSelector.value.trim(),
+		name: robotName.value.trim() || "Robot",
+		adapterConfiguration: {
+			adapterId: adapterConfiguration ? adapterConfiguration.adapterId : "",
+			values: { ...values },
+		},
+		// Kept while older ROS-only plugins are migrated to adapter configurations.
+		namespace: typeof values.namespace === "string" ? values.namespace : "",
 		frame: frame,
 	};
 }
@@ -490,7 +457,7 @@ function updateVehicleSelection(event) {
 		? "rgba(255, 255, 255, 1.0)"
 		: "rgba(124, 124, 124, 0.3)";
 	icon.title = isSelected
-		? `Selected vehicle: ${event.detail.name} (${event.detail.namespace || "/"})`
+		? `Selected vehicle: ${event.detail.name}`
 		: "Select vehicle";
 	drawRobot();
 }
@@ -551,5 +518,6 @@ function refresh_icon_label(uniqueID, icon) {
 }
 
 resizeScreen();
+createAdapterEditor();
 
 console.log("Model Widget Loaded {uniqueID}")

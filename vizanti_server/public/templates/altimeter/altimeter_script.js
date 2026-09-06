@@ -1,12 +1,17 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let tfModule = await import(`${base_url}/js/modules/tf.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 
 let view = viewModule.view;
 let tf = tfModule.tf;
-let rosbridge = rosbridgeModule.rosbridge;
+let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
@@ -23,10 +28,11 @@ let meters_smooth = 0;
 let target = NaN;
 
 let frame = "";
-let topic = "";
+let endpointConfiguration = null;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.FLOAT;
+let endpointConfigurationEditor;
 
-let float_topic = undefined;
-let listener = undefined;
+let subscription = undefined;
 
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
@@ -43,8 +49,6 @@ const ctx = canvas.getContext('2d', { colorSpace: 'srgb' });
 
 const icon_bar = document.getElementById("icon_bar");
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
-const selectionbox = document.getElementById("{uniqueID}_topic");
-const frameSelector = document.getElementById("{uniqueID}_frame");
 const modeSelector = document.getElementById("{uniqueID}_mode");
 const stepBox = document.getElementById("{uniqueID}_step");
 
@@ -56,27 +60,18 @@ const imgpreview = document.getElementById('{uniqueID}_imgpreview');
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
 	modeSelector.value = loaded_data.mode;
-	frame = loaded_data.frame;
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration ?? {
+		mode: loaded_data.configuration_mode || "manual",
+		robotModelId: loaded_data.robotmodel_id || "",
+		manual: loaded_data.manual_endpoint_configuration || null,
+		robotModel: loaded_data.robot_endpoint_configuration || null,
+	};
 
 	stepBox.value = loaded_data.step;
-	frameSelector.value = frame;
-	selectionbox.value = topic;
 
 	step = loaded_data.step;
 	img_offset_x = loaded_data.img_offset_x;
 }else{
-
-	if(frame == ""){
-		frame = "base_link";
-		status.setWarn("No frame found, defaulting to base_link");
-	}
-
-	/* if(topic == ""){
-		topic = "/depth_tgt";
-		status.setWarn("No topic found, defaulting to /depth_tgt");
-	} */
-
 	img_offset_x = (document.querySelectorAll('.altimeter_canvas').length-1) * 110;
 	saveSettings();
 }
@@ -84,44 +79,71 @@ if(settings.hasOwnProperty("{uniqueID}")){
 function saveSettings(){
 	settings["{uniqueID}"] = {
 		mode: modeSelector.value,
-		frame: frame,
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		step: step,
 		img_offset_x: img_offset_x
 	}
 	settings.save();
 }
 
+function activeEndpointConfiguration() {
+	return endpointConfigurationEditor ? endpointConfigurationEditor.activeConfiguration : null;
+}
+
+function configuredFrameFor(configuration) {
+	if (!configuration) {
+		return "";
+	}
+
+	let adapterConfiguration = configuration.manualAdapterConfiguration;
+	if (configuration.mode === "robotmodel") {
+		const robotModel = vehicleSelectionModule.getRegisteredVehicles()
+			.find((vehicle) => vehicle.id === configuration.robotModelId);
+		adapterConfiguration = robotModel ? robotModel.adapterConfiguration : null;
+	}
+
+	const configuredFrame = adapterConfiguration && adapterConfiguration.values
+		? adapterConfiguration.values.tfFrame : "";
+	return typeof configuredFrame === "string" ? configuredFrame.trim() : "";
+}
+
+function applyConfiguredFrame(configuration) {
+	const configuredFrame = configuredFrameFor(configuration);
+	if (configuredFrame === "") {
+		return;
+	}
+
+	frame = configuredFrame;
+	meters = getMeters();
+	drawWidget();
+}
+
 //topic
 function connect(){
 
-	if(topic == ""){
+	const activeConfiguration = activeEndpointConfiguration();
+	if(!activeConfiguration || !activeConfiguration.endpoint){
 		target = NaN;
 		text_target.innerText = "Target: N/A";
 		return;
 	}
 
-	if(float_topic !== undefined){
-		float_topic.unsubscribe(listener);
+	if(subscription !== undefined){
+		subscription.unsubscribe();
 	}
 
-	float_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'std_msgs/msg/Float32'
-	});
-	
-	listener = float_topic.subscribe((msg) => {
+	subscription = endpointService.subscribe(activeConfiguration, endpointMessageType, (message) => {
+		const value = message.value;
 		const mode = MODES[modeSelector.value];
-		target = Math.abs(msg.data);
-		if(msg.data > 0){
+		target = Math.abs(value);
+		if(value > 0){
 			if(mode.dir == "depth" && mode.invert)
 				target = NaN;
 
 			if(mode.dir == "altitude" && mode.invert)
 				target = NaN;
 
-		}else if (msg.data < 0){
+		}else if (value < 0){
 			if(mode.dir == "depth" && !mode.invert)
 				target = NaN;
 
@@ -142,24 +164,14 @@ function connect(){
 
 function publishTarget(value){
 
-	if(topic == "")
+	const activeConfiguration = activeEndpointConfiguration();
+	if(!activeConfiguration || !activeConfiguration.endpoint)
 		return;
 
 	if(MODES[modeSelector.value].invert)
 		value = -value;
 
-	const publisher = new ROSLIB.Topic({
-		ros: rosbridge.ros,
-		name: topic,
-		messageType: 'std_msgs/msg/Float32'
-	});
-
-	const floatMsg = new ROSLIB.Message({
-		data: value
-	});
-
-	publisher.publish(floatMsg);
-	publisher.unadvertise();
+	endpointService.publish(activeConfiguration, guiMessages.createFloat(value));
 }
 
 function getMeters(){
@@ -375,33 +387,9 @@ window.addEventListener('resize', resizeScreen);
 window.addEventListener('orientationchange', resizeScreen);
 window.addEventListener("iconbar_height_change", resizeScreen);
 
-// TF frame list
-function setFrameList(){
-	let framelist = "";
-	for (const key of tf.frame_list.values()) {
-		framelist += "<option value='"+key+"'>"+key+"</option>"
-	}
-	frameSelector.innerHTML = framelist;
-
-	if(tf.transforms.hasOwnProperty(frame)){
-		frameSelector.value = frame;
-	}else{
-		framelist += "<option value='"+frame+"'>"+frame+"</option>"
-		frameSelector.innerHTML = framelist
-		frameSelector.value = frame;
-	}
-}
-
 modeSelector.addEventListener("change", (event) => {
 	target = NaN;
 	text_target.innerText = "Target: N/A";
-	saveSettings();
-	refreshStyleSetup();
-	drawWidget();
-});
-
-frameSelector.addEventListener("change", (event) =>{
-	frame = frameSelector.value;
 	saveSettings();
 	refreshStyleSetup();
 	drawWidget();
@@ -415,41 +403,27 @@ stepBox.addEventListener("change", (event) =>{
 });
 
 
-// Topics
-async function loadTopics(){
-	let result = await rosbridge.get_topics("std_msgs/msg/Float32");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>";
-	});
-	topiclist += "<option value=''>(Disabled)</option>";
-	selectionbox.innerHTML = topiclist
-
-	if(result.includes(topic) || topic == ""){
-		selectionbox.value = topic;
-	}else{
-		topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-		selectionbox.innerHTML = topiclist
-		selectionbox.value = topic;
-	}
-
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	saveSettings();
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		applyConfiguredFrame(configuration);
+		saveSettings();
+		connect();
+	},
 });
 
 icon.addEventListener("click", ()=>{
-	setFrameList();
-	loadTopics();
+	endpointConfigurationEditor.refresh();
 });
 
 resizeScreen();
-loadTopics();
+endpointConfigurationEditor.refresh();
 
 //targeting
 function getEventXY(event){
@@ -497,7 +471,8 @@ let targeting_point = {
 
 function onTargetStart(event) {
 
-	if(topic == "")
+	const configuration = activeEndpointConfiguration();
+	if(!configuration || !configuration.endpoint)
 		return;
 
 	const [x, y] = getEventLocalXY(event);
@@ -516,7 +491,8 @@ function onTargetStart(event) {
 
 function onTargetEnd(event) {
 
-	if(topic == "")
+	const configuration = activeEndpointConfiguration();
+	if(!configuration || !configuration.endpoint)
 		return;
 
 	targeting_active = false;

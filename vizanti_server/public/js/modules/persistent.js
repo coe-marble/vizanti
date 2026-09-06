@@ -23,8 +23,14 @@ export class Settings {
 			this.fromJSON(default_config);
 		}
 
-		this._saveTimeout = null;
-		this._savePending = false;
+		Object.defineProperties(this, {
+			_saveTimeout: { value: null, writable: true, enumerable: false },
+			_savePending: { value: false, writable: true, enumerable: false },
+		});
+
+		if (typeof window !== "undefined") {
+			window.addEventListener("pagehide", () => this.flush());
+		}
 	}
 
 	fromJSON(settings_object) {
@@ -35,7 +41,6 @@ export class Settings {
 	save() {
 		if (!this._saveTimeout) {
 			localStorage.setItem("settings", JSON.stringify(this));
-			
 			this._saveTimeout = setTimeout(() => {
 				this._saveTimeout = null;
 
@@ -47,6 +52,15 @@ export class Settings {
 		} else {
 			this._savePending = true;
 		}
+	}
+
+	flush() {
+		if (this._saveTimeout !== null) {
+			clearTimeout(this._saveTimeout);
+			this._saveTimeout = null;
+		}
+		this._savePending = false;
+		localStorage.setItem("settings", JSON.stringify(this));
 	}
 }
 

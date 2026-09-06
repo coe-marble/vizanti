@@ -18,8 +18,14 @@ source += '\nreturn { Settings, settings };';
 		getItem(key) { return storage.get(key) || null; },
 		setItem(key, value) { storage.set(key, String(value)); },
 	};
-	const setTimeoutStub = () => 1;
-	const clearTimeoutStub = () => {};
+	const timeoutCallbacks = new Map();
+	let nextTimeoutId = 0;
+	const setTimeoutStub = (callback) => {
+		const id = ++nextTimeoutId;
+		timeoutCallbacks.set(id, callback);
+		return id;
+	};
+	const clearTimeoutStub = (id) => timeoutCallbacks.delete(id);
 	const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 	const { Settings } = await new AsyncFunction(
 		'injectedDefaultConfig', 'localStorage', 'setTimeout', 'clearTimeout', source
@@ -47,6 +53,15 @@ source += '\nreturn { Settings, settings };';
 	assert.equal(persisted.custom, false);
 	assert.equal(persisted.extra, 'value');
 	assert.deepEqual(persisted.view, { scale: 25 });
+	stored.flush();
+
+	stored.extra = 'first write';
+	stored.save();
+	stored.extra = 'latest write';
+	stored.save();
+	assert.equal(JSON.parse(storage.get('settings')).extra, 'first write');
+	stored.flush();
+	assert.equal(JSON.parse(storage.get('settings')).extra, 'latest write');
 	console.log('persistent settings tests passed');
 })().catch(error => {
 	console.error(error);

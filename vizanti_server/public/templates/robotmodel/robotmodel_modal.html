@@ -20,27 +20,13 @@
 		<p class="comment">Renders a simple 2D sprite of a fixed size relative to a TF link, for scale. </p>
 
 
-		<label for="{uniqueID}_frame">TF Frame:</label>
-		<select id="{uniqueID}_frame" name="topic">
-			<option value='base_link'>base_link</option>
-		</select>
-
-		<div class="spacer"></div>
-
 		<label for="{uniqueID}_name">Robot Name:</label>
 		<input type="text" id="{uniqueID}_name" name="name" placeholder="robot_name" value="robot">
 
-		<label for="{uniqueID}_namespace">ROS Namespace:</label>
-		<input type="text" id="{uniqueID}_namespace" name="namespace" placeholder="/robot_1">
-
-		<fieldset class="robotmodel-topics">
-			<legend>Vehicle Topics</legend>
-
-			<label for="{uniqueID}_goto_topic">Go To Point Topic:</label>
-			<input type="text" id="{uniqueID}_goto_topic" name="goto_topic" placeholder="goto_point">
-
-			<label for="{uniqueID}_path_topic">Path Topic:</label>
-			<input type="text" id="{uniqueID}_path_topic" name="path_topic" placeholder="plan">
+		<fieldset class="robotmodel-adapter">
+			<legend>Adapter Configuration</legend>
+			<p class="comment">The selected adapter defines the fields below. Message formats and endpoints are configured by each plugin.</p>
+			<div id="{uniqueID}_adapter_configuration"></div>
 		</fieldset>
 
 		<label for="{uniqueID}_length">Robot Length (m):</label>

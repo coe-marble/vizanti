@@ -47,8 +47,8 @@ if(VIZANTI_NODE_EXECUTABLE)
     COMMAND ${VIZANTI_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_vehicle_selection.mjs
   )
   add_test(
-    NAME test_rosbridge
-    COMMAND ${VIZANTI_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_rosbridge.mjs
+    NAME test_rosbridge_impl
+    COMMAND ${VIZANTI_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_rosbridge_impl.mjs
   )
   add_test(
     NAME test_util
@@ -63,8 +63,8 @@ if(VIZANTI_NODE_EXECUTABLE)
     COMMAND ${VIZANTI_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_persistent.mjs
   )
   add_test(
-    NAME test_tf
-    COMMAND ${VIZANTI_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_tf.mjs
+    NAME test_tf_impl
+    COMMAND ${VIZANTI_NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/test_tf_impl.mjs
   )
   file(GLOB VIZANTI_TEMPLATE_TESTS CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/test/templates/test_*.mjs

@@ -1,4 +1,5 @@
 import assert from 'assert';
+import fs from 'fs';
 import { runTemplateContract } from './template_test_helpers.mjs';
 import { loadFunctions, environment, element, spy, plain, subscriptionCases } from './plugin_harness.mjs';
 
@@ -7,16 +8,21 @@ describe('robotmodel plugin', function () {
         runTemplateContract('robotmodel');
     });
 
-    for (const [frame, expected] of [['/fleet/robot/base_link/', '/fleet/robot'], ['robot/base_footprint', '/robot'], ['robot/base', '/robot'], ['base_link', ''], ['robot/camera', ''], [null, '']]) {
-        it(`derives namespace ${JSON.stringify(expected)} from frame ${JSON.stringify(frame)}`, function () {
-            assert.strictEqual(loadFunctions('robotmodel', ['namespaceFromFrame']).namespaceFromFrame(frame), expected);
+    it('keeps adapter fields out of the Robot Model message configuration', function () {
+        const modal = fs.readFileSync(new URL('../../public/templates/robotmodel/robotmodel_modal.html', import.meta.url), 'utf8');
+        assert(modal.includes('{uniqueID}_name'));
+        assert(modal.includes('{uniqueID}_adapter_configuration'));
+        assert(!modal.includes('{uniqueID}_frame'));
+        assert(!modal.includes('{uniqueID}_namespace'));
+        assert(!modal.includes('Endpoint Configurations'));
+    });
+    it('uses the adapter TF frame for the sprite', function () {
+        const ctx = loadFunctions('robotmodel', ['configuredFrame'], {
+            adapterConfiguration: { values: { tfFrame: 'fleet/alpha/base_link' } },
+            find_base_frame: () => 'base_link',
         });
-    }
-    for (const [input, expected] of [[' robot/ ', '/robot'], ['/fleet/robot/', '/fleet/robot'], ['/', ''], ['', '']]) {
-        it(`normalizes configured namespace ${JSON.stringify(input)}`, function () {
-            assert.strictEqual(loadFunctions('robotmodel', ['normalizedNamespace'], { namespaceSelector: element(input) }).normalizedNamespace(), expected);
-        });
-    }
+        assert.strictEqual(ctx.configuredFrame(), 'fleet/alpha/base_link');
+    });
     it('prefers base_link over footprint and other base frames', function () {
         const ctx = loadFunctions('robotmodel', ['find_base_frame'], { tf: { frame_list: new Set(['base', 'base_footprint', 'robot/base_link']) } });
         assert.strictEqual(ctx.find_base_frame(), 'robot/base_link');
@@ -32,15 +38,16 @@ describe('robotmodel plugin', function () {
         const openModal = spy();
         const scheduled = [];
         const ctx = loadFunctions('robotmodel', [
-            'normalizedNamespace', 'getCurrentVehicle', 'selectCurrentVehicle',
+            'getCurrentVehicle', 'selectCurrentVehicle',
             'registerCurrentVehicle', 'updateVehicleSelection', 'selectRobotOnMap',
             'startLongPress', 'cancelLongPress',
         ], {
             icon,
             robotName: element('AUV'),
-            namespaceSelector: element('/fleet/alpha/'),
-            gotoTopicSelector: element('goto'),
-            pathTopicSelector: element('/path'),
+            adapterConfiguration: {
+                adapterId: 'local-ros2',
+                values: { namespace: '/fleet/alpha', tfFrame: 'alpha/base_link' },
+            },
             frame: 'alpha/base_link',
             selectVehicle,
             registerVehicle,
@@ -62,13 +69,17 @@ describe('robotmodel plugin', function () {
         const { ctx } = interactionContext();
         assert.deepStrictEqual(plain(ctx.getCurrentVehicle()), {
             id: '{uniqueID}', name: 'AUV', namespace: '/fleet/alpha',
-            gotoTopic: 'goto', pathTopic: '/path', frame: 'alpha/base_link',
+			adapterConfiguration: {
+                adapterId: 'local-ros2',
+                values: { namespace: '/fleet/alpha', tfFrame: 'alpha/base_link' },
+            },
+			frame: 'alpha/base_link',
         });
     });
 
-    it('uses the robot frame as the vehicle name when no name is configured', function () {
+    it('uses Robot as the vehicle name when no name is configured', function () {
         const { ctx } = interactionContext({ robotName: element('   ') });
-        assert.strictEqual(ctx.getCurrentVehicle().name, 'alpha/base_link');
+        assert.strictEqual(ctx.getCurrentVehicle().name, 'Robot');
     });
 
     it('selects its configured vehicle', function () {
@@ -88,7 +99,7 @@ describe('robotmodel plugin', function () {
         ctx.updateVehicleSelection({ detail: { id: '{uniqueID}', name: 'AUV', namespace: '/fleet/alpha' } });
         assert.strictEqual(icon.classList.contains('vehicle-selected'), true);
         assert.strictEqual(icon.style.backgroundColor, 'rgba(255, 255, 255, 1.0)');
-        assert.strictEqual(icon.title, 'Selected vehicle: AUV (/fleet/alpha)');
+        assert.strictEqual(icon.title, 'Selected vehicle: AUV');
     });
 
     it('clears the selected icon state when another vehicle is selected', function () {

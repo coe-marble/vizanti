@@ -1,23 +1,23 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let tfModule = await import(`${base_url}/js/modules/tf.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
 
 let view = viewModule.view;
 let tf = tfModule.tf;
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
+let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
-const useSelectedVehicleCheckbox = document.getElementById("{uniqueID}_use_selected_vehicle");
-const selectedVehicleSelector = document.getElementById("{uniqueID}_selected_vehicle");
-const topicTarget = document.getElementById("{uniqueID}_topic_target");
-const vehicleTarget = document.getElementById("{uniqueID}_vehicle_target");
-let selectedVehicleId = "";
-
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const discoveryStatus = document.getElementById("{uniqueID}_discovery_status");
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
@@ -25,92 +25,45 @@ let status = new Status(
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
-	useSelectedVehicleCheckbox.checked = loaded_data.use_selected_vehicle ?? false;
-	selectedVehicleId = loaded_data.selected_vehicle_id ?? "";
+	endpointConfiguration = loaded_data.endpoint_configuration !== undefined
+		? loaded_data.endpoint_configuration : {
+		mode: loaded_data.configuration_mode || "manual",
+		robotModelId: loaded_data.selected_vehicle_id || "",
+		manual: loaded_data.manual_endpoint_configuration || null,
+		robotModel: loaded_data.robot_endpoint_configuration || null,
+	};
 }else{
-	saveSettings();
-}
-
-if(topic == ""){
-	topic = "/goal_pose";
-	status.setWarn("No topic found, defaulting to /goal_pose");
 	saveSettings();
 }
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
-		use_selected_vehicle: useSelectedVehicleCheckbox.checked,
-		selected_vehicle_id: selectedVehicleId,
+		endpoint_configuration: endpointConfiguration,
 	}
 	settings.save();
 }
 
-function refreshVehicleSelector() {
-	const vehicles = vehicleSelectionModule.getRegisteredVehicles();
-	selectedVehicleSelector.innerHTML = "<option value=''>Select vehicle</option>";
-	vehicles.forEach((vehicle) => {
-		const option = document.createElement("option");
-		option.value = vehicle.id;
-		option.textContent = `${vehicle.name} (${vehicle.namespace || "/"})`;
-		selectedVehicleSelector.appendChild(option);
-	});
-	selectedVehicleSelector.value = selectedVehicleId;
-}
-
-function updateVehicleTargetState() {
-	const useVehicleTarget = useSelectedVehicleCheckbox.checked;
-	topicTarget.hidden = useVehicleTarget;
-	vehicleTarget.hidden = !useVehicleTarget;
-	selectedVehicleSelector.disabled = !useVehicleTarget;
-}
-
-useSelectedVehicleCheckbox.addEventListener("change", () => {
-	updateVehicleTargetState();
-	saveSettings();
-});
-selectedVehicleSelector.addEventListener("change", () => {
-	selectedVehicleId = selectedVehicleSelector.value;
-	saveSettings();
-});
-window.addEventListener("vehicle_registry_changed", refreshVehicleSelector);
-refreshVehicleSelector();
-updateVehicleTargetState();
-
-function getPublishTopic() {
-	if (!useSelectedVehicleCheckbox.checked) {
-		return topic;
-	}
-
-	const selectedVehicle = vehicleSelectionModule.getRegisteredVehicles()
-		.find((vehicle) => vehicle.id === selectedVehicleId);
-	const configuredTopic = selectedVehicle?.gotoTopic?.trim();
-	if (!selectedVehicle || !configuredTopic) {
-		status.setError("Select a vehicle with a Go To Point Topic.");
+function getEndpointConfiguration() {
+	const configuration = endpointConfigurationEditor.activeConfiguration;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured endpoint.");
 		return null;
 	}
-
-	if (configuredTopic.startsWith("/")) {
-		return configuredTopic;
-	}
-
-	const namespace = selectedVehicle.namespace.replace(/^\/+|\/+$/g, "");
-	return namespace ? `/${namespace}/${configuredTopic}` : `/${configuredTopic}`;
+	return configuration;
 }
 
 function sendMessage(pos, delta){
-	if(!pos || !delta){
+	if(!pos){
 		status.setError("Could not send message, pose invalid.");
 		return;
 	}
 
-	const publishTopic = getPublishTopic();
-	if (!publishTopic) {
+	const configuration = getEndpointConfiguration();
+	if (!configuration) {
 		return;
 	}
 
-	let yaw = Math.atan2(delta.y, -delta.x);
+	let yaw = delta ? Math.atan2(delta.y, -delta.x) : 0;
 	let quat = Quaternion.fromEuler(yaw, 0, 0, 'ZXY');
 
 	let map_pos = view.screenToFixed(pos);
@@ -119,35 +72,21 @@ function sendMessage(pos, delta){
 	const currentTimeSecs = Math.floor(currentTime.getTime() / 1000);
 	const currentTimeNsecs = (currentTime.getTime() % 1000) * 1e6;
 
-	const publisher = new ROSLIB.Topic({
-		ros: rosbridge.ros,
-		name: publishTopic,
-		messageType: 'geometry_msgs/msg/PoseStamped',
-	});
-
-	const poseMessage = new ROSLIB.Message({
-		header: {
-			stamp: {
-				sec: currentTimeSecs,
-				nanosec: currentTimeNsecs
-			},
-			frame_id: tf.fixed_frame
-		},
-		pose: {
-			position: {
+	endpointService.publish(configuration, guiMessages.createPose({
+		stamp: { sec: currentTimeSecs, nanosec: currentTimeNsecs }, frameId: tf.fixed_frame,
+		position: {
 				x: map_pos.x,
 				y: map_pos.y,
 				z: 0.0
 			},
-			orientation: {
+		orientation: {
 				x: quat.x,
 				y: quat.y,
 				z: quat.z,
 				w: quat.w
 			}
 		}
-	});	
-	publisher.publish(poseMessage);
+	));
 	status.setOK();
 }
 
@@ -159,7 +98,7 @@ const view_container = document.getElementById("view_container");
 const icon = document.getElementById("{uniqueID}_icon");
 const iconImg = icon.getElementsByTagName('img')[0];
 
-let active = false;
+let goalActive = false;
 let sprite = new Image();
 let start_point = undefined;
 let delta = undefined;
@@ -238,10 +177,10 @@ function removeListeners(){
 }
 
 function setActive(value){
-	isRobotFocused = value;
-	view.setInputMovementEnabled(!isRobotFocused);
+	goalActive = value;
+	view.setInputMovementEnabled(!goalActive);
 
-	if(isRobotFocused){
+	if(goalActive){
 		addListeners();
 		icon.style.backgroundColor = "rgba(255, 255, 255, 1.0)";
 		view_container.style.cursor = "pointer";
@@ -252,35 +191,25 @@ function setActive(value){
 	}
 }
 
-// Topics
-
-const selectionbox = document.getElementById("{uniqueID}_topic");
-
-async function loadTopics(){
-	let result = await rosbridge.get_topics("geometry_msgs/msg/PoseStamped");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(result.includes(topic)){
-		selectionbox.value = topic;
-	}else{
-		topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-		selectionbox.innerHTML = topiclist
-		selectionbox.value = topic;
-	}
-}
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	saveSettings();
-	status.setOK();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: guiMessages.GUI_MESSAGE_TYPE.POSE,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) { endpointConfiguration = configuration; saveSettings(); },
 });
 
-loadTopics();
+async function discoverTopics() {
+	discoveryStatus.textContent = "Topics: fetching...";
+	try {
+		await endpointConfigurationEditor.refresh();
+		discoveryStatus.textContent = "Topics: fetched.";
+	} catch (error) {
+		discoveryStatus.textContent = "Topics: failed to fetch.";
+	}
+}
 
 // Long press modal open stuff
 
@@ -288,10 +217,12 @@ let longPressTimer;
 let isLongPress = false;
 
 icon.addEventListener("click", (event) =>{
-	if(!isLongPress)
-		setActive(!isRobotFocused);
-	else
+	if(!isLongPress) {
+		discoverTopics();
+		setActive(!goalActive);
+	} else {
 		isLongPress = false;
+	}
 });
 
 icon.addEventListener("mousedown", startLongPress);
@@ -310,8 +241,8 @@ function startLongPress(event) {
 	isLongPress = false;
 	longPressTimer = setTimeout(() => {
 		isLongPress = true;
-		loadTopics();
 		openModal("{uniqueID}_modal");
+		discoverTopics();
 	}, 500);
 }
 

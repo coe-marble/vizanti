@@ -1265,27 +1265,59 @@ li {
   background-color: transparent;
 }
 
-.robotmodel-topics {
+.robotmodel-adapter,
+.endpoint-configuration {
   margin: 12px 0;
   padding: 8px 10px 10px;
   border: 1px solid #666;
   border-radius: 4px;
 }
 
-.robotmodel-topics legend {
+.robotmodel-adapter legend,
+.endpoint-configuration legend {
   padding: 0 5px;
   color: #b4b4b4;
   font-size: 0.9em;
 }
 
-.robotmodel-topics label {
-  display: block;
-  margin-top: 6px;
+.configuration-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
 }
 
-.robotmodel-topics input {
+.configuration-field label {
+  display: block;
+}
+
+.configuration-field input[type="text"],
+.configuration-field select {
   width: 100%;
   box-sizing: border-box;
+}
+
+.configuration-manual-toggle {
+  flex-direction: row;
+  align-items: center;
+}
+
+.configuration-manual-toggle label {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.configuration-manual-endpoint {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	width: 100%;
+}
+
+.configuration-manual-endpoint input[type="text"] {
+	flex: 1;
+	width: auto;
 }
 
 .menu-item.delete {
