@@ -1,28 +1,31 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.POINT_CLOUD;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let range_topic = undefined;
-let listener = undefined;
+let subscription = undefined;
 let data = undefined;
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const click_icon = document.getElementById("{uniqueID}_icon");
 const icon = click_icon.getElementsByTagName('object')[0];
 
@@ -72,7 +75,7 @@ colourOverrideCheckbox.addEventListener('change', saveSettings);
 //Settings
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 
 	opacitySlider.value = loaded_data.opacity;
 	opacityValue.innerText = loaded_data.opacity;
@@ -105,7 +108,7 @@ if (icon.contentDocument) {
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		opacity: opacitySlider.value,
 		thickness: thicknessSlider.value,
 		color: colourpicker.value,
@@ -189,9 +192,9 @@ function bytes_to_datatype(view, offset, type, littleEndian){
 		case 1: return parseFloat(view.getInt8(offset));
 		case 2: return parseFloat(view.getUint8(offset));
 		case 3: return parseFloat(view.getInt16(offset, littleEndian));
-		case 4: return parseFloat(view.getUInt16(offset, littleEndian)); 
+		case 4: return parseFloat(view.getUint16(offset, littleEndian));
 		case 5: return parseFloat(view.getInt32(offset, littleEndian)); 
-		case 6: return parseFloat(view.getUInt32(offset, littleEndian)); 
+		case 6: return parseFloat(view.getUint32(offset, littleEndian));
 		case 7: return view.getFloat32(offset, littleEndian); 
 		case 8: return view.getFloat64(offset, littleEndian);
 		default: return 0;
@@ -275,46 +278,31 @@ function histogramCut(points, numBuckets) {
 
 //Topic
 function connect(){
-
-	if(topic == ""){
-		status.setError("Empty topic.");
+	if (subscription) subscription.unsubscribe();
+	subscription = undefined;
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No point cloud endpoint configured.");
 		return;
 	}
-	
-	if(range_topic !== undefined){
-		range_topic.unsubscribe(listener);
-	}
-
-	range_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'sensor_msgs/msg/PointCloud2',
-		throttle_rate: parseInt(throttle.value),
-		compression: rosbridge.compression,
-		queue_length: 1
-	});
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");
 
-	listener = range_topic.subscribe((msg) => {	
-
-		let error = false;
-		if(msg.header.frame_id == ""){
-			status.setWarn("Transform frame is an empty string, falling back to fixed frame.");
-			msg.header.frame_id = tf.fixed_frame;
-			error = true;
-		}
-
-		if(!tf.absoluteTransforms[msg.header.frame_id]){
-			status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		const frameId = message.frameId || tf.fixed_frame;
+		const hasWarning = message.frameId === "";
+		if(!tf.absoluteTransforms[frameId]){
+			status.setError(`Required transform frame "${frameId}" not found.`);
 			return;
 		}
 
-		const numPoints = msg.width * msg.height;
-		const xData = msg.fields.find(field => field.name === 'x');
-		const yData = msg.fields.find(field => field.name === 'y');
-		const zData = msg.fields.find(field => field.name === 'z');
-		const rgbData = msg.fields.find(field => field.name === 'rgb');
+		const numPoints = message.width * message.height;
+		const xData = message.fields.find(field => field.name === 'x');
+		const yData = message.fields.find(field => field.name === 'y');
+		const zData = message.fields.find(field => field.name === 'z');
+		const rgbData = message.fields.find(field => field.name === 'rgb');
 
 		if(!xData || !yData || !zData){
 			status.setError("XYZ coordinate data not found in cloud.");
@@ -327,47 +315,27 @@ function connect(){
 		const sampledCount = Math.ceil(numPoints / sampleStep);
 
 		// Build sampled byte array — only copy bytes for points we'll actually use
-		const sampledBytes = new Uint8Array(sampledCount * msg.point_step);
+		const sampledBytes = new Uint8Array(sampledCount * message.pointStep);
 
-		if(typeof msg.data === 'string'){
-			const binaryString = atob(msg.data);
-			for(let i = 0, s = 0; i < numPoints; i += sampleStep, s++){
-				const srcOffset = i * msg.point_step;
-				for(let b = 0; b < msg.point_step; b++){
-					sampledBytes[s * msg.point_step + b] = binaryString.charCodeAt(srcOffset + b);
-				}
-			}
-		} else {
-			let src;
-			if(msg.data instanceof Uint8Array){
-				src = msg.data;
-			} else if(msg.data instanceof ArrayBuffer){
-				src = new Uint8Array(msg.data);
-			} else if(typeof msg.data === 'object' && msg.data[0] !== undefined){
-				src = Uint8Array.from(msg.data);
-			} else {
-				status.setError("Cloud in unknown data type: " + typeof msg.data);
-				return;
-    }
-			for(let i = 0, s = 0; i < numPoints; i += sampleStep, s++){
-				sampledBytes.set(src.subarray(i * msg.point_step, (i + 1) * msg.point_step), s * msg.point_step);
-			}
+		const src = Uint8Array.from(message.data);
+		for(let i = 0, s = 0; i < numPoints; i += sampleStep, s++){
+			sampledBytes.set(src.subarray(i * message.pointStep, (i + 1) * message.pointStep), s * message.pointStep);
 		}
 
-		const littleEndian = !msg.is_bigendian;
+		const littleEndian = !message.isBigEndian;
 		const dataview = new DataView(sampledBytes.buffer);
 		let pointarray = [];
 
 		if(!rgbData){
 
 			for(let s = 0; s < sampledCount; s++){
-				const byteOffset = s * msg.point_step;
+				const byteOffset = s * message.pointStep;
 				const point = {
 					x: bytes_to_datatype(dataview, byteOffset + xData.offset, xData.datatype, littleEndian),
 					y: bytes_to_datatype(dataview, byteOffset + yData.offset, yData.datatype, littleEndian),
 					z: bytes_to_datatype(dataview, byteOffset + zData.offset, zData.datatype, littleEndian)
 				};
-				const transformed = tf.transformPoseStamped(msg.header, point, new Quaternion()).translation;
+				const transformed = tf.transformPoseStamped({ frameId, stamp: message.stamp }, point, new Quaternion()).translation;
 				pointarray.push(transformed);
 			}
 
@@ -377,21 +345,20 @@ function connect(){
 					points: pointarray
 				};
 				drawCloud();
-				if(!error){
-					status.setOK();
-				}
+				if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+				else status.setOK();
 			}
 
 		}else{
 
 			for(let s = 0; s < sampledCount; s++){
-				const byteOffset = s * msg.point_step;
+				const byteOffset = s * message.pointStep;
 				const point = {
 					x: bytes_to_datatype(dataview, byteOffset + xData.offset, xData.datatype, littleEndian),
 					y: bytes_to_datatype(dataview, byteOffset + yData.offset, yData.datatype, littleEndian),
 					z: bytes_to_datatype(dataview, byteOffset + zData.offset, zData.datatype, littleEndian)
 				};
-				const transformed = tf.transformPoseStamped(msg.header, point, new Quaternion()).translation;
+				const transformed = tf.transformPoseStamped({ frameId, stamp: message.stamp }, point, new Quaternion()).translation;
 
 				if(rgbData){
 					const bits = dataview.getUint32(byteOffset + rgbData.offset, littleEndian);
@@ -409,51 +376,32 @@ function connect(){
 				};
 
 				drawCloud();
-				if(!error){
-					status.setOK();
-				}
+				if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+				else status.setOK();
 			}
 
 		}
 
 		
-	});
+	}, { throttleRate: parseInt(throttle.value), queueLength: 1 });
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("sensor_msgs/msg/PointCloud2");
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	data = undefined;
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		data = undefined;
+		connect();
+	},
 });
-
-selectionbox.addEventListener("click", connect);
-click_icon.addEventListener("click", loadTopics);
-
-loadTopics();
+endpointConfigurationEditor.refresh();
 resizeScreen();
 
 console.log("Point Cloud Widget Loaded {uniqueID}")

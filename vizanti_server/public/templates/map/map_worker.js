@@ -83,8 +83,8 @@ self.addEventListener('message', function(event) {
 	const msg = event.data.map_msg;
 	const colour_scheme = event.data.colour_scheme;
 
-	const width = msg.info.width;
-	const height = msg.info.height;
+	const width = msg.width;
+	const height = msg.height;
 
 	const mapctx = canvas.getContext('2d', { colorSpace: 'srgb' });
 

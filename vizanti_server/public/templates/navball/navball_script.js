@@ -1,21 +1,28 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let imageToDataURL = utilModule.imageToDataURL;
 let Status = StatusModule.Status;
 let endpointService = endpointServiceModule.endpointService;
 let tf = endpointService.getTf();
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
 let offset_x = "-999";
 let offset_y = "-999";
 
-let mode = "" //see setMode()
-let raw_target = "";
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.IMU;
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+let imuSubscription = undefined;
+let sourceMode = "imu";
+let tfFrame = "";
 
 //all angles summed need to move at least this much to trigger an update
 const angleDelta = 0.001;
@@ -53,11 +60,6 @@ let textureDataInv;
 const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
 const vwToVh = vw => (vw * window.innerWidth) / window.innerHeight;
 
-let topic = getTopic("{uniqueID}");
-
-if(topic != "")
-	topic += " (Imu)";
-
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
@@ -68,11 +70,11 @@ let stock_images = {};
 stock_images["loading"] = await imageToDataURL("assets/tile_loading.png");
 stock_images["error"] = await imageToDataURL("assets/tile_error.png");
 
-let imu_topic = undefined;
-let listener = undefined;
-
 const angleModeBox = document.getElementById('{uniqueID}_angle_mode');
-const selectionbox = document.getElementById("{uniqueID}_topic");
+const sourceModeBox = document.getElementById('{uniqueID}_source_mode');
+const endpointContainer = document.getElementById("{uniqueID}_endpoint_configuration");
+const tfSourceContainer = document.getElementById("{uniqueID}_tf_source");
+const tfFrameSelector = document.getElementById("{uniqueID}_tf_frame");
 const altRollCheckbox = document.getElementById('{uniqueID}_alt_roll');
 
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
@@ -164,34 +166,36 @@ center.onload = () => {
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
+	sourceMode = loaded_data.source_mode === "tf" ? "tf" : "imu";
+	tfFrame = typeof loaded_data.tf_frame === "string" ? loaded_data.tf_frame : "";
 
-	offset_x = loaded_data.offset_x;
-	offset_y = loaded_data.offset_y;
+	offset_x = loaded_data.offset_x ?? 50;
+	offset_y = loaded_data.offset_y ?? 95;
 
-	throttle.value = loaded_data.throttle;
+	throttle.value = loaded_data.throttle ?? 30;
 
-	opacitySlider.value = loaded_data.opacity;
-	opacityValue.innerText = loaded_data.opacity;
-	canvas.style.opacity = loaded_data.opacity;
+	opacitySlider.value = loaded_data.opacity ?? 0.85;
+	opacityValue.innerText = opacitySlider.value;
+	canvas.style.opacity = opacitySlider.value;
 
-	widthSlider.value = loaded_data.width;
-	widthValue.innerText = loaded_data.width;
+	widthSlider.value = loaded_data.width ?? 10;
+	widthValue.innerText = widthSlider.value;
 
-	angleModeBox.value = loaded_data.angle_mode;
-	altRollCheckbox.checked = loaded_data.alt_roll;
+	angleModeBox.value = loaded_data.angle_mode ?? "horizon_fake";
+	altRollCheckbox.checked = loaded_data.alt_roll ?? false;
 
 	displayImageOffset(offset_x, offset_y);
-	setMode();
 }else{
 	displayImageOffset(50, 95);
 	saveSettings();
 }
 
 function saveSettings(){
-	setMode();
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
+		source_mode: sourceMode,
+		tf_frame: tfFrame,
 		opacity: opacitySlider.value,
 		throttle: throttle.value,
 		width: widthSlider.value,
@@ -427,75 +431,100 @@ function updateData(){
 
 let updateInteral = setInterval(renderNavball, 33);
 
+function activeEndpointConfiguration() {
+	return endpointConfigurationEditor ? endpointConfigurationEditor.activeConfiguration : null;
+}
+
+function deliveryOptions() {
+	const throttleRate = Number.parseInt(throttle.value, 10);
+	return {
+		throttleRate: Number.isFinite(throttleRate) && throttleRate >= 0 ? throttleRate : 0,
+		queueLength: 1,
+	};
+}
+
+function timestampSeconds(stamp) {
+	const secs = stamp && (stamp.sec === undefined ? stamp.secs : stamp.sec);
+	const nanosecs = stamp && (stamp.nanosec === undefined ? stamp.nsecs : stamp.nanosec);
+	return (Number.isFinite(secs) ? secs : 0) + (Number.isFinite(nanosecs) ? nanosecs : 0) * 1e-9;
+}
+
+function disconnect() {
+	if (imuSubscription !== undefined) {
+		imuSubscription.unsubscribe();
+		imuSubscription = undefined;
+	}
+}
+
+function clearImuData() {
+	text_accel_x.innerText = "X: /";
+	text_accel_y.innerText = "Y: /";
+	text_accel_z.innerText = "Z: /";
+	text_gyro_x.innerText = "X: /";
+	text_gyro_y.innerText = "Y: /";
+	text_gyro_z.innerText = "Z: /";
+}
+
 function connect(){
-	if(imu_topic !== undefined){
-		imu_topic.unsubscribe(listener);
-	}
-
-	if(mode != "topic")
-		return;
-
-	if(topic == ""){
-		status.setError("Empty topic.");
+	disconnect();
+	if (sourceMode !== "imu") {
+		clearImuData();
 		return;
 	}
 
+	const configuration = activeEndpointConfiguration();
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured endpoint.");
+		return;
+	}
+
+	tf = endpointService.getTf(configuration.adapterId);
 	status.setWarn("No data received.");
 
-	let stamp = null; 
+	let stamp = null;
 	let estimatedQuat = new Quaternion(1, 0, 0, 0);  // Identity quaternion (w, x, y, z)
 	let isGyroValid = false;
 
 	function isQuaternionValid(q) {
 		const norm = Math.sqrt(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
-		return norm > 0.5 && Math.abs(norm - 1.0) < 0.1;  // basic sanity check
+		return norm > 0.5 && Math.abs(norm - 1.0) < 0.1;  // Basic sanity check
 	}
 
-	imu_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : raw_target,
-		messageType : 'sensor_msgs/msg/Imu',
-		throttle_rate: parseInt(throttle.value),
-		queue_length: 1
-	});
-	
-	listener = imu_topic.subscribe((msg) => {  
-
-		text_frame_id.innerText = "Frame: "+msg.header.frame_id;
+	imuSubscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		text_frame_id.innerText = "Frame: "+message.frameId;
 
 		const msg_quat = new Quaternion([
-			msg.orientation.w, 
-			msg.orientation.x, 
-			msg.orientation.y, 
-			msg.orientation.z
+			message.orientation.w,
+			message.orientation.x,
+			message.orientation.y,
+			message.orientation.z,
 		]);
 
 		text_quaternion.innerText = "Quaternion XYZW: "+msg_quat.x.toFixed(3)+","+msg_quat.y.toFixed(3)+","+msg_quat.z.toFixed(3)+","+msg_quat.w.toFixed(3);
 
-		const ax = msg.linear_acceleration.x;
-		const ay = msg.linear_acceleration.y;
-		const az = msg.linear_acceleration.z;
+		const ax = message.linearAcceleration.x;
+		const ay = message.linearAcceleration.y;
+		const az = message.linearAcceleration.z;
 
-		const gx = msg.angular_velocity.x;
-		const gy = msg.angular_velocity.y;
-		const gz = msg.angular_velocity.z;
+		const gx = message.angularVelocity.x;
+		const gy = message.angularVelocity.y;
+		const gz = message.angularVelocity.z;
 
 		if(!isQuaternionValid(msg_quat)){
-			const now = msg.header.stamp.secs + msg.header.stamp.nsecs * 1e-9; 
+			const now = timestampSeconds(message.stamp);
 			let dt = stamp ? (now - stamp) : 0.05;
 			dt = Math.min(dt, 0.05);
 			stamp = now;
 
 			let gyroQuat = estimatedQuat.clone();
 
-			// Apply gyro rotation if available
 			if(gx != 0 || gy != 0 || gz != 0){
 				const angle = Math.sqrt(gx*gx + gy*gy + gz*gz) * dt;
 				if(angle > 0.0001) {
 					const axis = [
 						gx / angle * dt,
 						gy / angle * dt,
-						gz / angle * dt
+						gz / angle * dt,
 					];
 					const deltaQuat = Quaternion.fromAxisAngle(axis, angle);
 					gyroQuat = estimatedQuat.mul(deltaQuat).normalize();
@@ -503,7 +532,6 @@ function connect(){
 				isGyroValid = true;
 			}
 
-			// Apply accelerometer-based orientation if available
 			if(ax != 0 || ay != 0 || az != 0){
 				const accRoll = Math.atan2(ay, az);
 				const accPitch = Math.atan2(-ax, Math.sqrt(ay * ay + az * az));
@@ -511,10 +539,9 @@ function connect(){
 				const rollQuat = Quaternion.fromEuler(0, accRoll, 0);
 				const pitchQuat = Quaternion.fromEuler(0, 0, accPitch);
 				const accelQuat = pitchQuat.mul(rollQuat).normalize();
-				
+
 				if(isGyroValid){
 					const yawQuat = Quaternion.fromEuler(gyroQuat.toEuler().h, 0, 0);
-					
 					const fusedQuat = yawQuat.mul(accelQuat).normalize();
 					const interpolator = gyroQuat.slerp(fusedQuat);
 
@@ -529,12 +556,11 @@ function connect(){
 				}
 
 			} else {
-				// Gyro only
 				estimatedQuat = gyroQuat;
 				quat = estimatedQuat;
 				status.setWarn("Quaternion and accelerometer invalid, estimating with gyro only.");
 			}
-			
+
 		} else {
 			quat = msg_quat;
 			status.setOK();
@@ -549,101 +575,96 @@ function connect(){
 		text_gyro_z.innerText = "Z: "+ gz;
 
 		updateData();
-		
-	});
+	}, deliveryOptions());
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let imu_array = await rosbridge.get_topics("sensor_msgs/msg/Imu");
-	let tf_array = Array.from(tf.frame_list);
-
-	let topiclist = "";
-	imu_array.forEach(element => {
-		topiclist += "<option value='"+element+" (Imu)'>"+element+" (Imu)</option>"
-	});
-
-	tf_array.forEach(frame => {
-		topiclist += "<option value='"+frame+" (Frame)'>"+frame+" (Frame)</option>"
-	});
-
-	selectionbox.innerHTML = topiclist
-
-	if(topic == ""){
-		topic = selectionbox.value;
-		setMode();
-	}else{
-		setMode();
-		if(imu_array.includes(raw_target) || tf_array.includes(raw_target)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
+function updateTfFrameList() {
+	const current = tfFrame;
+	tfFrameSelector.innerHTML = "<option value=''>Select TF frame</option>";
+	for (const frame of tf.frame_list) {
+		tfFrameSelector.innerHTML += "<option value='"+frame+"'>"+frame+"</option>";
 	}
-
-	connect();
+	tfFrameSelector.value = current;
+	if (tfFrameSelector.value !== current && current !== "") {
+		tfFrameSelector.innerHTML += "<option value='"+current+"'>"+current+"</option>";
+		tfFrameSelector.value = current;
+	}
 }
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
+function updateSourceUi() {
+	sourceModeBox.value = sourceMode;
+	endpointContainer.hidden = sourceMode !== "imu";
+	tfSourceContainer.hidden = sourceMode !== "tf";
+	if (sourceMode === "tf") {
+		clearImuData();
+		updateTfFrameList();
+	}
+}
+
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: endpointContainer,
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+		connect();
+	},
+});
+
+sourceModeBox.addEventListener("change", () => {
+	sourceMode = sourceModeBox.value;
+	updateSourceUi();
 	saveSettings();
 	connect();
 });
 
-selectionbox.addEventListener("click", connect);
+tfFrameSelector.addEventListener("change", () => {
+	tfFrame = tfFrameSelector.value;
+	saveSettings();
+	updateTfSource();
+});
 
 icon.addEventListener("click", ()=> {
-	loadTopics();
+	endpointConfigurationEditor.refresh();
+	updateTfFrameList();
 });
 
-loadTopics();
-
-function setMode(){
-	if(topic.endsWith("(Frame)")){
-		mode = "tf";
-		raw_target = topic.replace(" (Frame)", "");
-
-		text_accel_x.innerText = "X: /";
-		text_accel_y.innerText = "Y: /";
-		text_accel_z.innerText = "Z: /";
-
-		text_gyro_x.innerText = "X: /";
-		text_gyro_y.innerText = "Y: /";
-		text_gyro_z.innerText = "Z: /";
-
-	}else if(topic.endsWith("(Imu)")){
-		mode = "topic";
-		raw_target = topic.replace(" (Imu)", "");
-	}else{
-		mode = "";
-		raw_target = "";
+function updateTfSource() {
+	if (sourceMode !== "tf" || tfFrame === "") {
+		return;
 	}
+	const frame = tf.absoluteTransforms[tfFrame];
+	if(!frame){
+		status.setError("Required transform frame \""+tfFrame+"\" not found.");
+		return;
+	}
+
+	quat = frame.rotation;
+	text_frame_id.innerText = "Frame: "+tfFrame;
+	text_quaternion.innerText = "Quaternion XYZW: "+quat.x.toFixed(3)+","+quat.y.toFixed(3)+","+quat.z.toFixed(3)+","+quat.w.toFixed(3);
+	updateData();
+	status.setOK();
 }
 
 let tf_throttle_stamp = 0;
 window.addEventListener("tf_changed", ()=>{
-	if(mode == "tf"){
+	if(sourceMode === "tf"){
 		const now = Date.now();
-		if(now - tf_throttle_stamp >= parseInt(throttle.value)){
-			const frame = tf.absoluteTransforms[raw_target];
-
-			if(!frame){
-				status.setError("Required transform frame \""+raw_target+"\" not found.");
-				return;
-			}
-
-			quat = frame.rotation;
-			text_quaternion.innerText = "Quaternion XYZW: "+quat.x.toFixed(3)+","+quat.y.toFixed(3)+","+quat.z.toFixed(3)+","+quat.w.toFixed(3);
-			updateData();
-
-			status.setOK();
+		if(now - tf_throttle_stamp >= deliveryOptions().throttleRate){
+			updateTfSource();
 			tf_throttle_stamp = now;
 		}
 	}
 });
+
+updateSourceUi();
+endpointConfigurationEditor.refresh();
 
 //preview for definining position
 let preview_active = false;

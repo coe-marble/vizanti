@@ -1,320 +1,287 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
-let paramsModule = await import(`${base_url}/ros_launch_params`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let settings = persistentModule.settings;
 let imageToDataURL = utilModule.imageToDataURL;
 let Status = StatusModule.Status;
-let params = paramsModule.default;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.OCCUPANCY_GRID;
+let endpointConfigurationEditor;
+let subscription = undefined;
+
+let mapData = undefined;
+let newMapData = undefined;
+let receivedMessage = undefined;
+
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
 let icons = {};
-icons["map"] = await imageToDataURL("assets/map.svg");
-icons["costmap"] = await imageToDataURL("assets/costmap.svg");
-icons["raw"] = await imageToDataURL("assets/rawmap.svg");
-icons["raw_transparent"] = await imageToDataURL("assets/rawmap_transparent_white.svg");
-icons["raw_transparent_black"] = await imageToDataURL("assets/rawmap_transparent_black.svg");
-icons["sonar"] = await imageToDataURL("assets/sonar.svg");
+icons.map = await imageToDataURL("assets/map.svg");
+icons.costmap = await imageToDataURL("assets/costmap.svg");
+icons.raw = await imageToDataURL("assets/rawmap.svg");
+icons.raw_transparent = await imageToDataURL("assets/rawmap_transparent_white.svg");
+icons.raw_transparent_black = await imageToDataURL("assets/rawmap_transparent_black.svg");
+icons.sonar = await imageToDataURL("assets/sonar.svg");
 
-let listener = undefined;
-let map_topic = undefined;
-let map_data = undefined;
-let new_map_data = undefined;
+// Firefox currently has incomplete OffscreenCanvas support.
+const tempCanvas = document.createElement("canvas");
+const workerThread = new Worker(`${base_url}/templates/map/map_worker.js`);
+const mapCanvas = document.createElement("canvas");
+const offscreenCanvas = mapCanvas.transferControlToOffscreen();
+workerThread.postMessage({ canvas: offscreenCanvas }, [offscreenCanvas]);
 
-let received_msg = undefined;
+const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName("img")[0];
+const opacitySlider = document.getElementById("{uniqueID}_opacity");
+const opacityValue = document.getElementById("{uniqueID}_opacity_value");
+const colourSchemeBox = document.getElementById("{uniqueID}_colour_scheme");
+const timestampCheckbox = document.getElementById("{uniqueID}_use_timestamp");
+const throttle = document.getElementById("{uniqueID}_throttle");
+const canvas = document.getElementById("{uniqueID}_canvas");
+const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
 
-//firefox bug workaround
-const temp_canvas = document.createElement('canvas');
-
-const worker_thread = new Worker(`${base_url}/templates/map/map_worker.js`);
-const map_canvas = document.createElement('canvas');
-
-//offscreen rendering is currently half broken in firefox
-//https://bugzilla.mozilla.org/show_bug.cgi?id=1833496
-const offscreen_canvas = map_canvas.transferControlToOffscreen();
-worker_thread.postMessage({	canvas: offscreen_canvas}, [offscreen_canvas]);
-
-const selectionbox = document.getElementById("{uniqueID}_topic");
-const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
-
-const opacitySlider = document.getElementById('{uniqueID}_opacity');
-const opacityValue = document.getElementById('{uniqueID}_opacity_value');
-
-function setOpacityText(val){
-	if(val == 0.0)
+function setOpacityText(value) {
+	if (value == 0.0) {
 		opacityValue.textContent = "0.0 (Map rendering disabled)";
-	else
-		opacityValue.textContent = val;
+		return;
+	}
+	opacityValue.textContent = value;
 }
 
-opacitySlider.addEventListener('input', () =>  {
-	setOpacityText(opacitySlider.value)
-	saveSettings();
-	drawMap();
-});
-
-const loadPathBox = document.getElementById("{uniqueID}_loadpath");
-const loadTopicBox = document.getElementById("{uniqueID}_loadtopic");
-const savePathBox = document.getElementById("{uniqueID}_savepath");
-
-const colourSchemeBox = document.getElementById('{uniqueID}_colour_scheme');
-colourSchemeBox.selectedIndex = topic.includes("cost") ? 1 : 0;
-colourSchemeBox.addEventListener('change', saveSettings);
-
-const timestampCheckbox = document.getElementById('{uniqueID}_use_timestamp');
-timestampCheckbox.addEventListener('change', saveSettings);
-
-const throttle = document.getElementById('{uniqueID}_throttle');
-throttle.addEventListener("input", (event) =>{
-	saveSettings();
-	connect();
-});
-
-const canvas = document.getElementById('{uniqueID}_canvas');
-const ctx = canvas.getContext('2d', { colorSpace: 'srgb' });
-
-if(settings.hasOwnProperty("{uniqueID}")){
-	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
-
-	opacitySlider.value = loaded_data.opacity;
-	setOpacityText(loaded_data.opacity);
-
-	if(loaded_data.costmap_mode !== undefined){
-		colourSchemeBox.selectedIndex = loaded_data.costmap_mode ? 1 : 0;
-	}else{
-		colourSchemeBox.selectedIndex = loaded_data.colour_scheme > 0 ? loaded_data.colour_scheme: 0;
-	}
-
-	timestampCheckbox.checked = loaded_data.use_timestamp ?? false;
-	throttle.value = loaded_data.throttle ?? 1000;
-}else{
+if (settings.hasOwnProperty("{uniqueID}")) {
+	const loadedData = settings["{uniqueID}"];
+	endpointConfiguration = loadedData.endpoint_configuration || null;
+	opacitySlider.value = loadedData.opacity ?? opacitySlider.value;
+	setOpacityText(opacitySlider.value);
+	colourSchemeBox.selectedIndex = loadedData.colour_scheme ?? 0;
+	timestampCheckbox.checked = loadedData.use_timestamp ?? false;
+	throttle.value = loadedData.throttle ?? 1000;
+} else {
 	saveSettings();
 }
 
 icon.src = icons[colourSchemeBox.value];
 
-function saveSettings(){
+function saveSettings() {
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		opacity: opacitySlider.value,
 		colour_scheme: colourSchemeBox.selectedIndex,
 		throttle: throttle.value,
-		use_timestamp: timestampCheckbox.checked
-	}
+		use_timestamp: timestampCheckbox.checked,
+	};
 	settings.save();
 }
 
-//Rendering
+function activeEndpointConfiguration() {
+	return endpointConfigurationEditor ? endpointConfigurationEditor.activeConfiguration : null;
+}
 
-async function drawMap(){
+function deliveryOptions() {
+	return {
+		throttleRate: parseInt(throttle.value),
+		queueLength: 1,
+	};
+}
 
-	if(!map_data)
-		return;
-
-	ctx.setTransform(1,0,0,1,0,0);
+function clearMap() {
+	mapData = undefined;
+	newMapData = undefined;
+	receivedMessage = undefined;
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
 	ctx.imageSmoothingEnabled = false;
+}
 
-	if(opacitySlider.value == 0.0)
+async function drawMap() {
+	if (!mapData) {
 		return;
+	}
 
-	const map_width = view.getMapUnitsInPixels(
-		temp_canvas.width * map_data.info.resolution
-	);
+	ctx.setTransform(1, 0, 0, 1, 0, 0);
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	ctx.imageSmoothingEnabled = false;
+	if (opacitySlider.value == 0.0) {
+		return;
+	}
 
-	const map_height = view.getMapUnitsInPixels(
-		temp_canvas.height * map_data.info.resolution
-	);
+	const message = mapData.message;
+	const mapWidth = view.getMapUnitsInPixels(tempCanvas.width * message.resolution);
+	const mapHeight = view.getMapUnitsInPixels(tempCanvas.height * message.resolution);
+	let tfPose = mapData.pose;
 
-	let tf_pose = map_data.pose;
-
-	if(!timestampCheckbox.checked){
-		tf_pose = tf.transformPoseStamped(
-			map_data.header,
-			map_data.info.origin.position,
-			map_data.info.origin.orientation
+	if (!timestampCheckbox.checked) {
+		tfPose = tf.transformPoseStamped(
+			{ frameId: mapData.frameId, stamp: message.stamp },
+			message.originPosition,
+			message.originOrientation
 		);
 	}
 
-	const pos = view.fixedToScreen({
-		x: tf_pose.translation.x,
-		y: tf_pose.translation.y,
+	const position = view.fixedToScreen({
+		x: tfPose.translation.x,
+		y: tfPose.translation.y,
 	});
-
-	const matrix = view.quaterionToProjectionMatrix(tf_pose.rotation);
+	const matrix = view.quaterionToProjectionMatrix(tfPose.rotation);
 
 	ctx.globalAlpha = opacitySlider.value;
-	ctx.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], pos.x, pos.y); //sx,0,0,sy,px,py
+	ctx.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], position.x, position.y);
 	ctx.scale(1.0, -1.0);
-	ctx.drawImage(temp_canvas, 0, 0, map_width, map_height);
+	ctx.drawImage(tempCanvas, 0, 0, mapWidth, mapHeight);
 }
 
-//Topic
-
-function connect(){
-
-	if(topic == ""){
-		status.setError("Empty topic.");
-		return;
-	}
-
-	if(map_topic !== undefined){
-		map_topic.unsubscribe(listener);
-	}
-
-	map_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'nav_msgs/msg/OccupancyGrid',
-		throttle_rate: parseInt(throttle.value), // throttle to once every two seconds max
-		compression: rosbridge.compression,
-		queue_length: 1
-	});
-
-	status.setWarn("No data received.");
-
-	worker_thread.onmessage = (e) => {
-		setTimeout(()=>{
-			const img = e.data.image
-			temp_canvas.width = img.width
-			temp_canvas.height = img.height
-			temp_canvas.getContext('2d', { colorSpace: 'srgb' }).putImageData(img, 0, 0);
-			map_data = new_map_data;
-			drawMap();
-			status.setOK();
-		},1);
-	};
-	
-	listener = map_topic.subscribe((msg) => {
-
-		if(msg.info.width == 0 || msg.info.height == 0){
-			status.setWarn("Received empty map.");
-			return;
-		}
-
-		if(msg.header.frame_id == ""){
-			status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-			msg.header.frame_id = tf.fixed_frame;
-		}
-
-		if(!tf.absoluteTransforms[msg.header.frame_id]){
-			if(msg.header.frame_id == "map"){
-				status.setWarn("Map transform not available yet, using identity transform.");
-
-				//add a temporary transform so one can send an initialpose relative to it
-				tf.absoluteTransforms[msg.header.frame_id] = {
-					translation: {x: 0, y:0, z:0},
-					rotation: new Quaternion()
-				}
-				tf.frame_list.add("map");
-
-			}else{
-				status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
-				return;
-			}
-		}
-
-		queueWorkerMsg(msg);
-		received_msg = msg;
-	});
-
-	saveSettings();
-}
-
-function queueWorkerMsg(msg){
-	msg.pose = tf.transformPoseStamped(
-		msg.header,
-		msg.info.origin.position, 
-		msg.info.origin.orientation
+function queueWorkerMsg(message, frameId) {
+	const pose = tf.transformPoseStamped(
+		{ frameId, stamp: message.stamp },
+		message.originPosition,
+		message.originOrientation
 	);
 
-	new_map_data = msg;
-
-	worker_thread.postMessage({
-		map_msg: msg,
+	newMapData = { message, frameId, pose };
+	workerThread.postMessage({
+		map_msg: message,
 		colour_scheme: colourSchemeBox.value,
 	});
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("nav_msgs/msg/OccupancyGrid");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
+function disconnect() {
+	if (subscription !== undefined) {
+		subscription.unsubscribe();
+		subscription = undefined;
 	}
-	connect();
 }
 
-colourSchemeBox.addEventListener("change", (event) => {
+function connect() {
+	disconnect();
+	const configuration = activeEndpointConfiguration();
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No occupancy grid endpoint configured.");
+		return;
+	}
+
+	tf = endpointService.getTf(configuration.adapterId);
+	status.setWarn("No data received.");
+	subscription = endpointService.subscribe(
+		configuration,
+		endpointMessageType,
+		(message) => {
+			if (message.width === 0 || message.height === 0) {
+				status.setWarn("Received empty map.");
+				return;
+			}
+
+			const frameId = message.frameId || tf.fixed_frame;
+			if (message.frameId === "") {
+				status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
+			}
+
+			if (!tf.absoluteTransforms[frameId]) {
+				if (frameId === "map") {
+					status.setWarn("Map transform not available yet, using identity transform.");
+					// This temporary TFRos state access will move behind the TF adapter API.
+					tf.absoluteTransforms.map = {
+						translation: { x: 0, y: 0, z: 0 },
+						rotation: new Quaternion(),
+					};
+					tf.frame_list.add("map");
+				} else {
+					status.setError(`Required transform frame "${frameId}" not found.`);
+					return;
+				}
+			}
+
+			queueWorkerMsg(message, frameId);
+			receivedMessage = { message, frameId };
+		},
+		deliveryOptions()
+	);
+
+	saveSettings();
+}
+
+workerThread.onmessage = (event) => {
+	setTimeout(() => {
+		const image = event.data.image;
+		tempCanvas.width = image.width;
+		tempCanvas.height = image.height;
+		tempCanvas.getContext("2d", { colorSpace: "srgb" }).putImageData(image, 0, 0);
+		mapData = newMapData;
+		drawMap();
+		status.setOK();
+	}, 1);
+};
+
+opacitySlider.addEventListener("input", () => {
+	setOpacityText(opacitySlider.value);
+	saveSettings();
+	drawMap();
+});
+
+colourSchemeBox.addEventListener("change", () => {
 	icon.src = icons[colourSchemeBox.value];
-	queueWorkerMsg(received_msg);
+	saveSettings();
+	if (receivedMessage) {
+		queueWorkerMsg(receivedMessage.message, receivedMessage.frameId);
+	}
 });
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
+timestampCheckbox.addEventListener("change", () => {
+	saveSettings();
+	drawMap();
+});
 
-	map_data = undefined;
-	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	ctx.imageSmoothingEnabled = false;
-
+throttle.addEventListener("input", () => {
+	saveSettings();
 	connect();
 });
 
-selectionbox.addEventListener("click", (event) => {
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		clearMap();
+		saveSettings();
+		connect();
+	},
 });
 
-icon.addEventListener("click", (event) => {
-	loadTopics();
-});
+icon.addEventListener("click", () => endpointConfigurationEditor.refresh());
 
-loadTopics();
-
-function resizeScreen(){
+function resizeScreen() {
 	canvas.height = window.innerHeight;
 	canvas.width = window.innerWidth;
 	drawMap();
 }
 
 window.addEventListener("tf_fixed_frame_changed", drawMap);
-window.addEventListener("tf_changed", ()=>{
-	if(received_msg && received_msg.header.frame_id != tf.fixed_frame){
+window.addEventListener("tf_changed", () => {
+	if (receivedMessage && receivedMessage.frameId !== tf.fixed_frame) {
 		drawMap();
 	}
 });
-
 window.addEventListener("view_changed", drawMap);
-window.addEventListener('resize', resizeScreen);
-window.addEventListener('orientationchange', resizeScreen);
+window.addEventListener("resize", resizeScreen);
+window.addEventListener("orientationchange", resizeScreen);
 
 resizeScreen();
+endpointConfigurationEditor.refresh();
 
-console.log("Map Widget Loaded {uniqueID}")
+console.log("Map Widget Loaded {uniqueID}");

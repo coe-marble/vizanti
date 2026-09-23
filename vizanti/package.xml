@@ -11,8 +11,8 @@
 
     <buildtool_depend>ament_cmake_core</buildtool_depend>
 
-    <exec_depend>vizanti_msgs</exec_depend>
-    <exec_depend>vizanti_server</exec_depend>
+    <depend>vizanti_server</depend>
+    <depend>vizanti_cpp</depend>
 
     <export>
         <build_type>ament_cmake</build_type>

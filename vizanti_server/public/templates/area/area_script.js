@@ -1,35 +1,61 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
-
-let topic = getTopic("{uniqueID}");
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.POLYGON;
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration
+		?? legacyEndpointConfiguration(loaded_data.topic);
 }else{
 	saveSettings();
 }
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic
+		endpoint_configuration: endpointConfiguration,
 	}
 	settings.save();
+}
+
+function legacyEndpointConfiguration(topic) {
+	const endpointId = typeof topic === "string" ? topic.trim() : "";
+	return {
+		mode: "manual",
+		robotModelId: "",
+		manualAdapterConfiguration: {
+			adapterId: "ros2",
+			values: { namespace: "", tfFrame: "base_link" },
+		},
+		endpointConfiguration: {
+			endpointValues: {},
+			outputMessageId: "",
+			endpointId,
+			manualEndpointId: endpointId,
+			endpoint: null,
+			endpointMode: "manual",
+		},
+	};
 }
 
 function getStamp(){
@@ -46,6 +72,10 @@ function getStamp(){
 function sendMessage(start, end){
 	if(!start || !end){
 		status.setError("Could not send message, area invalid.");
+		return;
+	}
+	const configuration = getEndpointConfiguration();
+	if (!configuration) {
 		return;
 	}
 
@@ -73,29 +103,11 @@ function sendMessage(start, end){
 		z: 0
 	};
 
-	const publisher = new ROSLIB.Topic({
-		ros: rosbridge.ros,
-		name: topic,
-		messageType: 'geometry_msgs/msg/PolygonStamped'
-	});
-
-	const polygonMsg = new ROSLIB.Message({
-		header: {
-			stamp: getStamp(),
-			frame_id: tf.fixed_frame
-		},
-		polygon: {
-			points: [
-				start_pos,
-				point2,
-				end_pos,
-				point3,
-			]
-		},
-	});
-
-	publisher.publish(polygonMsg);
-	publisher.unadvertise();
+	endpointService.publish(configuration, guiMessages.createPolygon({
+		stamp: getStamp(),
+		frameId: tf.fixed_frame,
+		points: [start_pos, point2, end_pos, point3],
+	}));
 	status.setOK();
 }
 
@@ -210,34 +222,26 @@ function setActive(value){
 	}
 }
 
-// Topics
-const selectionbox = document.getElementById("{uniqueID}_topic");
-
-async function loadTopics(){
-	let result = await rosbridge.get_topics("geometry_msgs/msg/PolygonStamped");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
+function getEndpointConfiguration() {
+	const configuration = endpointConfigurationEditor.activeConfiguration;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured endpoint.");
+		return null;
 	}
+	return configuration;
 }
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	saveSettings();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+	},
 });
 
 // Long press modal open stuff
@@ -268,7 +272,7 @@ function startLongPress(event) {
 	isLongPress = false;
 	longPressTimer = setTimeout(() => {
 		isLongPress = true;
-		loadTopics();
+		endpointConfigurationEditor.refresh();
 		openModal("{uniqueID}_modal");
 	}, 500);
 }
@@ -278,6 +282,6 @@ function cancelLongPress(event) {
 }
 
 resizeScreen();
-loadTopics();
+endpointConfigurationEditor.refresh();
 
 console.log("Area Widget Loaded {uniqueID}")

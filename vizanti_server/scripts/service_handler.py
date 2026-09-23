@@ -1,306 +1,231 @@
 #!/usr/bin/env python3
 
-import subprocess
+"""Local operations used by Vizanti's HTTP API.
+
+This object deliberately is not an rclpy node. The Flask server optionally
+passes its ROS node here when ROS2 parameter operations are available.
+"""
+
 import os
-import fcntl
-import sys
-import rclpy
-import json
-import time
+import signal
+import subprocess
+import threading
+from datetime import datetime
+from pathlib import Path
 
-from rclpy.node import Node
 
-from rclpy.executors import  MultiThreadedExecutor
-from rclpy.callback_groups import ReentrantCallbackGroup
+class ServiceHandler:
+    """Run local shell, recording, and ROS parameter operations."""
 
-from ros2lifecycle.api import get_node_names
-from ros2pkg.api import get_package_names, get_prefix_path
-from rqt_reconfigure_param_api import create_param_client
-from rclpy.parameter import Parameter
+    def __init__(
+        self,
+        node,
+        allow_shell_commands=True,
+        shell_command_max_timeout_seconds=30,
+    ):
+        self._node = node
+        self._allow_shell_commands = allow_shell_commands
+        self._shell_command_max_timeout_seconds = shell_command_max_timeout_seconds
+        self._recording_process = None
+        self._recording_lock = threading.Lock()
+        self._parameter_lock = threading.Lock()
 
-from std_srvs.srv import Trigger
-from vizanti_msgs.srv import GetNodeParameters, SetNodeParameter
-from vizanti_msgs.srv import LoadMap, SaveMap
-from vizanti_msgs.srv import RecordRosbag
-from vizanti_msgs.srv import ManageNode, ListPackages, ListExecutables, ListLifecycles
+    def execute_command(self, command, timeout_seconds, background):
+        if not self._allow_shell_commands:
+            raise PermissionError("Shell command execution is disabled by the server.")
+        if not isinstance(command, str) or not command.strip() or len(command) > 4096:
+            raise ValueError("Command must contain 1 to 4096 characters.")
+        if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= self._shell_command_max_timeout_seconds:
+            raise ValueError(
+                "Command timeout must be between 1 and "
+                f"{self._shell_command_max_timeout_seconds} seconds.")
+        if not isinstance(background, bool):
+            raise ValueError("Command background mode must be a boolean.")
 
-from lifecycle_msgs.srv import GetState
-from lifecycle_msgs.msg import State
+        process = None
+        try:
+            if background:
+                process = subprocess.Popen(
+                    command,
+                    shell=True,
+                    executable="/bin/sh",
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                return {
+                    "success": True,
+                    "exitCode": 0,
+                    "processId": process.pid,
+                    "stdout": "",
+                    "stderr": "",
+                }
 
-class ServiceHandler(Node):
-    def __init__(self, group):
-        super().__init__("vizanti_service_handler")
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                executable="/bin/sh",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            return {
+                "success": process.returncode == 0,
+                "exitCode": process.returncode,
+                "processId": 0,
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+        except subprocess.TimeoutExpired:
+            if process is not None:
+                os.killpg(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+            else:
+                stdout, stderr = "", ""
+            return {
+                "success": False,
+                "exitCode": -1,
+                "processId": 0,
+                "stdout": stdout,
+                "stderr": f"Command exceeded the {timeout_seconds}-second timeout.\n{stderr}",
+            }
+        except OSError as error:
+            return {
+                "success": False,
+                "exitCode": -1,
+                "processId": 0,
+                "stdout": "",
+                "stderr": str(error),
+            }
 
-        self.proc = None
-        self.packages = sorted(list(get_package_names()))
+    def get_node_parameters(self, node_name):
+        if not isinstance(node_name, str) or not node_name:
+            raise ValueError("ROS2 parameter lookup requires a node name.")
+        if self._node is None:
+            raise RuntimeError("ROS2 parameter operations are unavailable without a ROS node.")
 
-        self.get_node_parameters_service = self.create_service(GetNodeParameters, 'vizanti/get_node_parameters', self.get_node_parameters, callback_group=group)
-        self.set_node_parameter_service = self.create_service(SetNodeParameter, 'vizanti/set_node_parameter', self.set_node_parameter, callback_group=group)
+        from rqt_reconfigure_param_api import create_param_client
 
-        self.record_setup_service = self.create_service(RecordRosbag, 'vizanti/bag/setup', self.recording_setup, callback_group=group)
+        param_client = None
+        try:
+            with self._parameter_lock:
+                param_client = create_param_client(self._node, node_name)
+                names = param_client.list_parameters()
+                descriptors = param_client.describe_parameters(names)
+                parameters = param_client.get_parameters(names)
+                return [
+                    [parameter.name, parameter.value, descriptor.type]
+                    for parameter, descriptor in zip(parameters, descriptors)
+                    if 0 < descriptor.type < 5
+                ]
+        finally:
+            if param_client is not None:
+                param_client.close()
 
-        self.kill_service = self.create_service(ManageNode, 'vizanti/node/kill', self.node_kill, callback_group=group)
-        self.start_service = self.create_service(ManageNode, 'vizanti/node/start', self.node_start, callback_group=group)
-        self.info_service = self.create_service(ManageNode, 'vizanti/node/info', self.node_info, callback_group=group)
-        self.wtf_service = self.create_service(Trigger, 'vizanti/roswtf', self.roswtf, callback_group=group)
-        self.record_status_service = self.create_service(Trigger, 'vizanti/bag/status', self.recording_status, callback_group=group)
-        self.list_lifecycle_service = self.create_service(ListLifecycles, 'vizanti/list_lifecycle_nodes', self.list_lifecycle_nodes_status, callback_group=group)
+    def set_node_parameter(self, node_name, name, value):
+        if not isinstance(node_name, str) or not node_name or not isinstance(name, str) or not name:
+            raise ValueError("ROS2 parameter updates require a node and parameter name.")
+        if self._node is None:
+            raise RuntimeError("ROS2 parameter operations are unavailable without a ROS node.")
 
-        self.list_packages_service = self.create_service(ListPackages, 'vizanti/list_packages', self.list_packages_callback, callback_group=group)
-        self.list_executables_service = self.create_service(ListExecutables, 'vizanti/list_executables', self.list_executables_callback, callback_group=group)
+        from rclpy.parameter import Parameter
+        from rqt_reconfigure_param_api import create_param_client
 
-        self.get_logger().info("Service handler ready.")
+        param_client = None
+        try:
+            with self._parameter_lock:
+                param_client = create_param_client(self._node, node_name)
+                descriptors = param_client.describe_parameters([name])
+                if not descriptors or descriptors[0].type == Parameter.Type.NOT_SET:
+                    raise LookupError("The requested parameter does not exist.")
+                param_type = Parameter.Type(descriptors[0].type)
+                if param_type == Parameter.Type.BOOL:
+                    if not isinstance(value, bool):
+                        raise ValueError("Boolean parameters require a boolean value.")
+                elif param_type == Parameter.Type.INTEGER:
+                    if type(value) is not int:
+                        raise ValueError("Integer parameters require an integer value.")
+                elif param_type == Parameter.Type.DOUBLE:
+                    if type(value) not in (int, float):
+                        raise ValueError("Double parameters require a number value.")
+                    value = float(value)
+                elif param_type == Parameter.Type.STRING:
+                    if not isinstance(value, str):
+                        raise ValueError("String parameters require a string value.")
+                else:
+                    raise ValueError("Only scalar ROS2 parameters are supported.")
 
-    def list_lifecycle_nodes_status(self, req, res):
-        node_names = get_node_names(node=self, include_hidden_nodes=True)
-        fullnames = [n.full_name for n in node_names]
-        state_ids = [0] * len(fullnames)
+                param_client.set_parameters([
+                    Parameter(name=name, type_=param_type, value=value),
+                ])
+                return {"success": True, "status": "Ok."}
+        finally:
+            if param_client is not None:
+                param_client.close()
 
-        for i in range(len(fullnames)):
+    def recording_status(self):
+        with self._recording_lock:
+            if self._recording_process is not None and self._recording_process.poll() is not None:
+                self._recording_process = None
+            active = self._recording_process is not None
+        return {
+            "active": active,
+            "message": "Bag recording in progress..." if active else "Bag recorder idle.",
+        }
+
+    @staticmethod
+    def _recording_output_path(path: str) -> str:
+        output_path = Path(path).expanduser()
+        if not output_path.exists():
+            return str(output_path)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+        candidate = output_path.with_name(f"{output_path.name}-{timestamp}")
+        suffix = 1
+        while candidate.exists():
+            candidate = output_path.with_name(
+                f"{output_path.name}-{timestamp}-{suffix}")
+            suffix += 1
+        return str(candidate)
+
+    def set_recording(self, topics, start, path):
+        if not isinstance(start, bool) or not isinstance(topics, list) or not all(
+            isinstance(topic, str) and topic for topic in topics
+        ) or not isinstance(path, str):
+            raise ValueError("Recording requires a start flag, path, and topic names.")
+
+        with self._recording_lock:
+            if self._recording_process is not None and self._recording_process.poll() is not None:
+                self._recording_process = None
+            if start:
+                if self._recording_process is not None:
+                    return {
+                        "success": False,
+                        "message": "Already recording, please stop the current recording first.",
+                    }
+                if not path:
+                    raise ValueError("Recording requires an output path.")
+                recording_path = self._recording_output_path(path)
+                try:
+                    self._recording_process = subprocess.Popen(
+                        ["ros2", "bag", "record", "-o", recording_path, *topics],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        start_new_session=True,
+                    )
+                except OSError as error:
+                    return {"success": False, "message": str(error)}
+                return {"success": True, "message": f"Recording started: {recording_path}"}
+
+            if self._recording_process is None:
+                return {"success": False, "message": "No active recording found."}
+            self._recording_process.terminate()
             try:
-                client = self.create_client(GetState,f'{fullnames[i]}/get_state')
-                response = client.call(GetState.Request())
-                state_ids[i] = response.current_state.id
-            except:
-                pass
-
-        res.nodes = fullnames
-        res.states = state_ids
-        return res
-
-    def list_packages_callback(self, req, res):
-        res.packages = self.packages
-        return res
-
-    def get_filenames(self, file_paths):
-        file_names = []
-        for file_path in file_paths:
-            base_name = os.path.basename(file_path)
-            if base_name.endswith(tuple([".py",".launch",".yaml"])) or "." not in base_name:
-                file_names.append(base_name)
-        return file_names
-
-    def list_executables_callback(self, req, res):
-
-        if req.package not in self.packages:
-            self.get_logger().error("Package not found: " + req.package)
-            res.executables = []
-            return res
-        
-        path = get_prefix_path(req.package)
-
-        #TODO add path to apt installed packages, I'm not sure where exactly those executables are yet
-        #self.get_logger().info(f"libpath: {libpath}")
-
-        cmd_exec = ["find", path+"/share/"+req.package] # get list of executables
-        cmd_exec = cmd_exec + ["-type", "f", "-o", "-type", "l"] # files or symlinks
-
-        cmd_launch = ["find", path+"/lib/"+req.package]
-        cmd_launch = cmd_launch + ["-type", "f", "-o", "-type", "l"]
-        process_exec = subprocess.Popen(cmd_exec, stdout=subprocess.PIPE)
-        process_launch = subprocess.Popen(cmd_launch, stdout=subprocess.PIPE)
-
-        output_exec, _ = process_exec.communicate()
-        output_launch, _ = process_launch.communicate()
-
-        # Process output
-        lines_exec = self.get_filenames(output_exec.decode('utf-8').split('\n'))
-        lines_launch = self.get_filenames(output_launch.decode('utf-8').split('\n'))
-
-        self.get_logger().info(f"lines_exec: {lines_exec}")
-        self.get_logger().info(f"output_python_and_launch: {lines_launch}")
-
-        executables = [line.split("/")[-1] for line in lines_exec if line]
-        launch_files = [line.split("/")[-1] for line in lines_launch if line]
-
-        res.executables = executables + launch_files
-        return res
-
-    def node_kill(self, req, res):
-        try:
-            #ros 2 doesn't let you kill nodes in a legit way, so we have to be extra janky lol
-            #this seems to also have the weird side effect that it takes a year for ros2 node list to show the change
-            self.get_logger().info("Attempting to kill node "+str(req.node))
-            subprocess.call("ps aux | grep '"+req.node+"' | awk '{print $2}' | xargs kill -9", shell=True)
-            res.success = True
-            res.message = f'Killed node {req.node}'
-        except Exception as e:
-            res.success = False
-            res.message = str(e)
-        return res
-
-    def node_start(self, req, res):
-        try:
-            args = req.node.split(" ")
-
-            # Open /dev/null
-            devnull = open(os.devnull, 'w')
-
-            # Set up the process to ignore the SIGTERM signal
-            def preexec():
-                os.setpgrp()
-                sys.stdin = open(os.devnull, 'r')
-                sys.stdout = open(os.devnull, 'w')
-                sys.stderr = open(os.devnull, 'w')
-
-            subprocess.Popen(args, stdout=devnull, stderr=devnull, preexec_fn=preexec)
-
-            self.get_logger().info("Starting node "+str(req.node))
-
-            res.success = True
-            res.message = f'Started node {req.node}'
-        except Exception as e:
-            res.success = False
-            res.message = str(e)
-        return res
-
-    def node_info(self, req, res):
-        try:
-            rosinfo = subprocess.check_output(["ros2", "node", "info", req.node]).decode('utf-8')
-            rosinfo = rosinfo.replace("--------------------------------------------------------------------------------", "")
-            res.success = True
-            res.message = rosinfo
-        except Exception as e:
-            res.success = False
-            res.message = str(e)
-        return res
-
-    def roswtf(self, req, res):
-        try:
-            self.get_logger().info("Compiling doctor report...")
-            rosinfo = subprocess.check_output(["ros2", "doctor", "--report"]).decode('utf-8')
-            res.success = True
-            res.message = rosinfo
-        except Exception as e:
-            res.success = False
-            res.message = str(e)
-        return res
-
-    def get_node_parameters(self, req, res):
-        try:
-            param_client = create_param_client(self, req.node)
-            param_names = param_client.list_parameters()
-            descriptors = param_client.describe_parameters(param_names)
-            #Parameter.Type Enum
-            #  <Type.NOT_SET: 0>,
-            #  <Type.BOOL: 1>,
-            #  <Type.INTEGER: 2>,
-            #  <Type.DOUBLE: 3>,
-            #  <Type.STRING: 4>,
-            #  <Type.BYTE_ARRAY: 5>,
-            #  <Type.BOOL_ARRAY: 6>,
-            #  <Type.INTEGER_ARRAY: 7>,
-            #  <Type.DOUBLE_ARRAY: 8>,
-            #  <Type.STRING_ARRAY: 9>
-
-            parameters = param_client.get_parameters(param_names)
-            param_list = []
-            for param, descriptor in zip(parameters, descriptors):
-                if descriptor.type > 0 and descriptor.type < 5: #TODO add support for the rest if anyone actually uses them
-                    param_list.append([param.name, param.value, descriptor.type])
-            res.parameters = json.dumps(param_list)            
-        except Exception as e:
-            res.parameters = "[]"
-            print(f"Failed to fetch parameters from node: {e}")
-        return res
-    
-    def set_node_parameter(self, req, res):
-        try:
-            param_client = create_param_client(self, req.node)
-            descriptors = param_client.describe_parameters([req.param])
-            param_type = Parameter.Type(descriptors[0].type)
-
-            value = req.value
-            if param_type == Parameter.Type.BOOL:
-                value = value == "true"
-            elif param_type == Parameter.Type.INTEGER:
-                value = int(value)
-            elif param_type == Parameter.Type.DOUBLE:
-                value = float(value)
-            """elif param_type == Parameter.Type.BYTE_ARRAY:
-                value = int(value)
-            elif param_type == Parameter.Type.BOOL_ARRAY:
-                value = int(value)
-            elif param_type == Parameter.Type.DOUBLE_ARRAY:
-                value = int(value)
-            elif param_type == Parameter.Type.STRING_ARRAY:
-                value = int(value)"""
-            
-            self.get_logger().info(f"Setting {req.node}/{req.param} to {value}")
-
-            parameter = Parameter(name=req.param, type_=param_type, value=value)
-            param_client.set_parameters([parameter])
-            res.status = "Ok."
-        except Exception as e:
-            res.status = "Error, could not set param."
-        return res
-
-    def recording_status(self, req, res):
-        response = Trigger.Response()
-        response.success = self.proc is not None
-
-        if response.success:
-            response.message = "Bag recording in progress..."
-        else:
-            response.message = "Bag recorder idle."
-
-        return response
-
-    def recording_setup(self, req, res):
-        response = RecordRosbag.Response()
-
-        if req.start:
-            if self.proc is not None:
-                response.success = False
-                response.message = "Already recording, please stop the current recording first."
-            else:
-                command = ['ros2', 'bag', 'record', '-o']
-
-                # Expand and add the path to the command
-                expanded_path = os.path.expanduser(req.path)
-                command.append(expanded_path)
-
-                # Add the topics to the command
-                for topic in req.topics:
-                    command.append(topic)
-
-                # Use subprocess to start rosbag record in a new process
-                self.proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                response.success = True
-                response.message = "Recording started."
-
-                self.get_logger().info("Recording ros2 bag to "+str(expanded_path))
-        else:
-            if self.proc is not None:
-                # Terminate the rosbag record process
-                self.proc.terminate()
-                self.proc.wait()
-                self.proc = None
-                response.success = True
-                response.message = "Recording stopped."
-
-                self.get_logger().info("Recording stopped.")
-            else:
-                response.success = False
-                response.message = "No active recording found."
-                self.get_logger().info("No active recording found.")
-
-        return response
-
-def main(args=None):
-    rclpy.init(args=args)
-
-    service_handler = ServiceHandler(group=ReentrantCallbackGroup())
-    executor = MultiThreadedExecutor(num_threads=20)
-    executor.add_node(service_handler)
-
-    try:
-        executor.spin()
-    except rclpy.executors.ExternalShutdownException:
-        pass
-
-    service_handler.destroy_node()
-    rclpy.shutdown()
-
-if __name__ == "__main__":
-    main()
+                self._recording_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(self._recording_process.pid, signal.SIGKILL)
+                self._recording_process.wait()
+            self._recording_process = None
+            return {"success": True, "message": "Recording stopped."}

@@ -7,12 +7,12 @@ import json
 import gzip
 import hashlib
 import shutil
-import rclpy
+import sys
 
-from flask import Flask, render_template, send_from_directory, make_response, request
+from flask import Flask, jsonify, render_template, send_from_directory, make_response, request
 from waitress.server import create_server
-from ament_index_python.packages import get_package_share_directory
 from bt_file_manager import BtFileManager, register_routes
+from service_handler import ServiceHandler
 
 from pathlib import Path
 
@@ -32,13 +32,17 @@ param_behavior_tree_folder = os.path.join(
 )
 param_copy_demo_trees = False
 param_demo_behavior_tree_source = ""
+param_allow_shell_commands = True
+param_shell_command_max_timeout_seconds = 30
 bt_file_manager = BtFileManager()
+service_handler = None
 
 def get_public_dir():
 	p = Path(__file__).resolve()
 	path = p.parents[1] / 'public'
 	if path.exists():
 		return path #for --symlink-install
+	from ament_index_python.packages import get_package_share_directory
 	return get_package_share_directory('vizanti_server')+ '/public/'
 
 app = Flask(__name__, static_folder=get_public_dir(), template_folder=get_public_dir())
@@ -144,6 +148,48 @@ def copy_demo_trees(destination, source):
 			if not os.path.exists(destination_file):
 				shutil.copy2(source_file, destination_file)
 
+
+def is_ros_launch(arguments):
+	return "--ros-args" in arguments
+
+
+def configure_ros_node(arguments):
+	"""Create the one ROS node used by the server when launched by ROS2."""
+	import rclpy
+
+	global node, param_base_url, param_port, param_port_rosbridge, param_compression
+	global param_default_widget_config, param_behavior_tree_folder
+	global param_copy_demo_trees, param_demo_behavior_tree_source
+	global param_allow_shell_commands, param_shell_command_max_timeout_seconds
+
+	rclpy.init(args=arguments)
+	node = rclpy.create_node('vizanti_flask_node')
+	node.declare_parameter('host', '0.0.0.0')
+	node.declare_parameter('port', param_port)
+	node.declare_parameter('port_rosbridge', param_port_rosbridge)
+	node.declare_parameter('flask_debug', False)
+	node.declare_parameter('base_url', param_base_url)
+	node.declare_parameter('compression', param_compression)
+	node.declare_parameter('default_widget_config', param_default_widget_config)
+	node.declare_parameter('behavior_tree_folder', param_behavior_tree_folder)
+	node.declare_parameter('copy_demo_trees', param_copy_demo_trees)
+	node.declare_parameter('demo_behavior_tree_source', param_demo_behavior_tree_source)
+	node.declare_parameter('allow_shell_commands', param_allow_shell_commands)
+	node.declare_parameter('shell_command_max_timeout_seconds', param_shell_command_max_timeout_seconds)
+
+	param_host = node.get_parameter('host').value
+	param_port = node.get_parameter('port').value
+	param_port_rosbridge = node.get_parameter('port_rosbridge').value
+	param_base_url = node.get_parameter('base_url').value
+	param_compression = node.get_parameter('compression').value
+	param_default_widget_config = node.get_parameter('default_widget_config').value
+	param_behavior_tree_folder = os.path.expanduser(node.get_parameter('behavior_tree_folder').value)
+	param_copy_demo_trees = node.get_parameter('copy_demo_trees').value
+	param_demo_behavior_tree_source = os.path.expanduser(node.get_parameter('demo_behavior_tree_source').value)
+	param_allow_shell_commands = node.get_parameter('allow_shell_commands').value
+	param_shell_command_max_timeout_seconds = node.get_parameter('shell_command_max_timeout_seconds').value
+	return rclpy, param_host
+
 def list_ros_launch_params():
 	params = {
 		"port": param_port,
@@ -154,6 +200,78 @@ def list_ros_launch_params():
 	response = make_response(js_module)
 	response.headers['Content-Type'] = 'application/javascript'
 	return response
+
+
+def api_error(message, status=400):
+	return jsonify({"error": message}), status
+
+
+def request_json_object():
+	payload = request.get_json(silent=True)
+	return payload if isinstance(payload, dict) else None
+
+
+def execute_shell_command():
+	payload = request_json_object()
+	if payload is None:
+		return api_error("Request body must be a JSON object.")
+	try:
+		return jsonify(service_handler.execute_command(
+			payload.get("command"), payload.get("timeoutSeconds", 10), payload.get("background", False)))
+	except PermissionError as error:
+		return api_error(str(error), 403)
+	except ValueError as error:
+		return api_error(str(error))
+
+
+def get_node_parameters():
+	node_name = request.args.get("node", "")
+	try:
+		return jsonify({"parameters": service_handler.get_node_parameters(node_name)})
+	except ValueError as error:
+		return api_error(str(error))
+	except RuntimeError as error:
+		return api_error(str(error), 503)
+	except Exception as error:
+		if node is not None:
+			node.get_logger().warning(f"Failed to fetch parameters from {node_name}: {error}")
+		return api_error("Could not fetch parameters from the requested node.", 502)
+
+
+def set_node_parameter():
+	payload = request_json_object()
+	if payload is None:
+		return api_error("Request body must be a JSON object.")
+	node_name = payload.get("node")
+	name = payload.get("name")
+	value = payload.get("value")
+	try:
+		return jsonify(service_handler.set_node_parameter(node_name, name, value))
+	except LookupError as error:
+		return api_error(str(error), 404)
+	except ValueError as error:
+		return api_error(str(error))
+	except RuntimeError as error:
+		return api_error(str(error), 503)
+	except Exception as error:
+		if node is not None:
+			node.get_logger().warning(f"Failed to set {node_name}/{name}: {error}")
+		return api_error("Could not set the requested parameter.", 502)
+
+
+def recording_status():
+	return jsonify(service_handler.recording_status())
+
+
+def set_recording():
+	payload = request_json_object()
+	if payload is None:
+		return api_error("Request body must be a JSON object.")
+	try:
+		return jsonify(service_handler.set_recording(
+			payload.get("topics"), payload.get("start"), payload.get("path")))
+	except ValueError as error:
+		return api_error(str(error))
 
 def serve_static(path):
 	return send_from_directory(app.static_folder, path)
@@ -237,69 +355,73 @@ class ServerThread(threading.Thread):
 def main(args=None):
 	global node, param_base_url, param_port, param_port_rosbridge, param_compression, param_default_widget_config
 	global param_behavior_tree_folder, param_copy_demo_trees, param_demo_behavior_tree_source
+	global service_handler
 
-	rclpy.init(args=args)
-	node = rclpy.create_node('vizanti_flask_node')
-
-	node.declare_parameter('host', '0.0.0.0')
-	node.declare_parameter('port', param_port)
-	node.declare_parameter('port_rosbridge', param_port_rosbridge)
-	node.declare_parameter('flask_debug', False)
-	node.declare_parameter('base_url', param_base_url)
-	node.declare_parameter('compression', param_compression)
-	node.declare_parameter('default_widget_config',param_default_widget_config)
-	node.declare_parameter('behavior_tree_folder', param_behavior_tree_folder)
-	node.declare_parameter('copy_demo_trees', param_copy_demo_trees)
-	node.declare_parameter('demo_behavior_tree_source', param_demo_behavior_tree_source)
-
-	param_host = node.get_parameter('host').value
-	param_port = node.get_parameter('port').value
-	param_port_rosbridge = node.get_parameter('port_rosbridge').value
-	param_base_url = node.get_parameter('base_url').value
-	param_compression = node.get_parameter('compression').value
-	param_default_widget_config = node.get_parameter('default_widget_config').value
-	param_behavior_tree_folder = os.path.expanduser(node.get_parameter('behavior_tree_folder').value)
-	param_copy_demo_trees = node.get_parameter('copy_demo_trees').value
-	param_demo_behavior_tree_source = os.path.expanduser(node.get_parameter('demo_behavior_tree_source').value)
+	arguments = list(sys.argv[1:] if args is None else args)
+	ros_runtime = None
+	param_host = '0.0.0.0'
+	flask_debug = False
+	if is_ros_launch(arguments):
+		ros_runtime, param_host = configure_ros_node(arguments)
+		flask_debug = node.get_parameter('flask_debug').value
 	os.makedirs(param_behavior_tree_folder, exist_ok=True)
 	bt_file_manager.set_root(param_behavior_tree_folder)
 
 	if param_copy_demo_trees:
 		if not param_demo_behavior_tree_source:
+			from ament_index_python.packages import get_package_share_directory
 			param_demo_behavior_tree_source = os.path.join(
 				get_package_share_directory('vizanti_demos'), 'behavior_trees')
 		copy_demo_trees(param_behavior_tree_folder, param_demo_behavior_tree_source)
-		node.get_logger().info(
-			f"Demo behavior trees copied to {param_behavior_tree_folder}")
+		logging.getLogger(__name__).info(
+			"Demo behavior trees copied to %s", param_behavior_tree_folder)
 
 	if param_default_widget_config != "":
 		param_default_widget_config = os.path.expanduser(param_default_widget_config)
 	else:
 		param_default_widget_config = os.path.join(app.static_folder, "assets/default_layout.json")
 
-	node.get_logger().info(f"Default widget config set to {param_default_widget_config}")
+	logging.getLogger(__name__).info("Default widget config set to %s", param_default_widget_config)
 
-	app.debug = node.get_parameter('flask_debug').value
+	app.debug = flask_debug
+	service_handler = ServiceHandler(
+		node,
+		allow_shell_commands=param_allow_shell_commands,
+		shell_command_max_timeout_seconds=param_shell_command_max_timeout_seconds,
+	)
 	app.add_url_rule(param_base_url + '/', 'index', index)
 	app.add_url_rule(param_base_url + '/templates/files', 'list_template_files', list_template_files)
 	app.add_url_rule(param_base_url + '/assets/robot_model/paths', 'list_robot_model_files', list_robot_model_files)
 	app.add_url_rule(param_base_url + '/ros_launch_params', 'ros_launch_params', list_ros_launch_params)
 	app.add_url_rule(param_base_url + '/default_widget_config', 'get_default_widget_config', get_default_widget_config)
+	app.add_url_rule(param_base_url + '/api/shell/execute', 'execute_shell_command', execute_shell_command, methods=['POST'])
+	app.add_url_rule(param_base_url + '/api/ros2/parameters', 'get_node_parameters', get_node_parameters, methods=['GET'])
+	app.add_url_rule(param_base_url + '/api/ros2/parameters', 'set_node_parameter', set_node_parameter, methods=['POST'])
+	app.add_url_rule(param_base_url + '/api/ros2/recording', 'recording_status', recording_status, methods=['GET'])
+	app.add_url_rule(param_base_url + '/api/ros2/recording', 'set_recording', set_recording, methods=['POST'])
 	register_routes(app, param_base_url, bt_file_manager)
 	app.add_url_rule(param_base_url + '/<path:path>', 'serve_static', serve_static)
 
 	server = ServerThread(app, param_host, param_port)
 	server.start()
 
-	node.get_logger().info(f"Flask server running at http://{param_host}:{param_port}{param_base_url}")
-	node.get_logger().info(f"Public directory set as {get_public_dir()}")
+	logging.getLogger(__name__).info(
+		"Flask server running at http://%s:%s%s", param_host, param_port, param_base_url)
+	logging.getLogger(__name__).info("Public directory set as %s", get_public_dir())
 
-	rclpy.spin(node)
-
-	server.shutdown()
-	server.join()
-	node.destroy_node()
-	rclpy.shutdown()
+	try:
+		if node is not None:
+			ros_runtime.spin(node)
+		else:
+			server.join()
+	except KeyboardInterrupt:
+		pass
+	finally:
+		server.shutdown()
+		server.join()
+		if node is not None:
+			node.destroy_node()
+			ros_runtime.shutdown()
 
 if __name__ == '__main__':
 	main()

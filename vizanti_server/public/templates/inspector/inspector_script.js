@@ -1,208 +1,167 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let rawTopicEditorModule = await import(`${base_url}/js/modules/raw_topic_configuration_editor.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
+let endpointService = endpointServiceModule.endpointService;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
+let createRawTopicConfiguration = rawTopicEditorModule.createRawTopicConfiguration;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+let subscription = undefined;
+let previousTopic = "";
+
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-const throttle = document.getElementById('{uniqueID}_throttle');
-throttle.addEventListener("input", (event) =>{
+const throttle = document.getElementById("{uniqueID}_throttle");
+const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName("img")[0];
+const infoDiv = document.getElementById("{uniqueID}_info_display");
+const liveDataDiv = document.getElementById("{uniqueID}_live_data_display");
+
+throttle.addEventListener("input", () => {
 	saveSettings();
 	connect();
 });
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
-const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
-
-const info_div = document.getElementById("{uniqueID}_info_display");
-const live_data_div = document.getElementById("{uniqueID}_live_data_display");
-
-if(settings.hasOwnProperty("{uniqueID}")){
-	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
-	throttle.value = loaded_data.throttle;
-}else{
+if (settings.hasOwnProperty("{uniqueID}")) {
+	const loadedData = settings["{uniqueID}"];
+	endpointConfiguration = loadedData.endpoint_configuration || null;
+	throttle.value = loadedData.throttle ?? 500;
+} else {
 	saveSettings();
 }
 
-function saveSettings(){
+function saveSettings() {
 	settings["{uniqueID}"] = {
-		topic: topic,
-		throttle: throttle.value
-	}
+		endpoint_configuration: endpointConfiguration,
+		throttle: throttle.value,
+	};
 	settings.save();
 }
 
-let listener = undefined;
-let topicobj = undefined;
-let topic_type = await getTopicType();
+function activeEndpointConfiguration() {
+	return endpointConfigurationEditor ? endpointConfigurationEditor.activeConfiguration : null;
+}
 
-let prevtopic = undefined;
+function deliveryOptions() {
+	const throttleRate = Number.parseInt(throttle.value, 10);
+	return {
+		throttleRate: Number.isFinite(throttleRate) && throttleRate >= 0 ? throttleRate : 0,
+		queueLength: 1,
+	};
+}
 
-function connect(){
+function disconnect() {
+	if (subscription !== undefined) {
+		subscription.unsubscribe();
+		subscription = undefined;
+	}
+}
 
-	if(topic == ""){
-		status.setError("Empty topic.");
+function createNestedDisplay(value, indent = 0) {
+	const container = document.createElement("div");
+	const indentSize = 20;
+	const maxStringLength = 200;
+	const maxArrayLength = 50;
+	const truncateString = (text) => typeof text === "string" && text.length > maxStringLength
+		? `${text.substring(0, maxStringLength)}... [truncated]` : text;
+
+	function appendText(text, level) {
+		const row = document.createElement("p");
+		row.style.marginLeft = `${level * indentSize}px`;
+		row.style.marginTop = "2px";
+		row.style.marginBottom = "2px";
+		row.textContent = text;
+		container.appendChild(row);
+	}
+
+	function appendValue(key, item, level) {
+		if (Array.isArray(item)) {
+			appendText(`${key}: Array(${item.length})`, level);
+			item.slice(0, maxArrayLength).forEach((arrayItem, index) => {
+				if (typeof arrayItem === "object" && arrayItem !== null) {
+					appendText(`[${index}]:`, level + 1);
+					container.appendChild(createNestedDisplay(arrayItem, level + 2));
+				} else {
+					appendText(`[${index}]: ${truncateString(arrayItem)}`, level + 1);
+				}
+			});
+			if (item.length > maxArrayLength) {
+				appendText(`... ${item.length - maxArrayLength} more items`, level + 1);
+			}
+			return;
+		}
+		if (typeof item === "object" && item !== null) {
+			appendText(`${key}:`, level);
+			container.appendChild(createNestedDisplay(item, level + 1));
+			return;
+		}
+		appendText(`${key}: ${truncateString(item)}`, level);
+	}
+
+	if (typeof value !== "object" || value === null) {
+		appendText(String(truncateString(value)), indent);
+		return container;
+	}
+	for (const [key, item] of Object.entries(value)) {
+		appendValue(key, item, indent);
+	}
+	return container;
+}
+
+function connect() {
+	disconnect();
+
+	const configuration = activeEndpointConfiguration();
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured topic.");
 		return;
 	}
 
-	if(topicobj !== undefined){
-		topicobj.unsubscribe(listener);
-	}
-
-	topicobj = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : topic_type,
-		throttle_rate: parseInt(throttle.value),
-		queue_length: 1
-	});
-
+	const topic = configuration.endpoint.topic;
 	status.setWarn("No data received.");
-
-	if(prevtopic != topic){
-		//clear data when the topic changes
-		live_data_div.innerHTML = '<p>Waiting for data...</p>';
-		info_div.innerHTML = '<p>Waiting for data...</p>';
-		prevtopic = topic;
+	if (previousTopic !== topic) {
+		liveDataDiv.innerHTML = "<p>Waiting for data...</p>";
+		infoDiv.innerHTML = "<p>Waiting for data...</p>";
+		previousTopic = topic;
 	}
 
-	listener = topicobj.subscribe(async (msg) => {
-
-		function createNestedDisplay(obj, indent = 0) {
-			const container = document.createElement('div');
-			const indentSize = 20; // pixels per level of indentation
-			const maxStringLength = 200; // maximum length for string values
-			const maxArrayLength = 50; // maximum number of array items to display
-			
-			// Helper function to truncate strings
-			const truncateString = (str) => {
-				if (typeof str !== 'string') return str;
-				if (str.length <= maxStringLength) return str;
-				return str.substring(0, maxStringLength) + '... [truncated]';
-			};
-			
-			Object.entries(obj).forEach(([key, value]) => {
-				const p = document.createElement('p');
-				p.style.marginLeft = `${indent * indentSize}px`;
-				p.style.marginTop = '2px';
-				p.style.marginBottom = '2px';
-				
-				if (Array.isArray(value)) {
-					// Handle arrays
-					p.textContent = `${key}: Array(${value.length})`;
-					container.appendChild(p);
-					
-					// Truncate array if too long
-					const displayArray = value.length > maxArrayLength 
-						? value.slice(0, maxArrayLength) 
-						: value;
-					
-					displayArray.forEach((item, index) => {
-						const arrayItem = document.createElement('p');
-						arrayItem.style.marginLeft = `${(indent + 1) * indentSize}px`;
-						arrayItem.style.marginTop = '2px';
-						arrayItem.style.marginBottom = '2px';
-						
-						if (typeof item === 'object' && item !== null) {
-							// Recursive call for objects within arrays
-							const nestedContent = createNestedDisplay(item, indent + 2);
-							container.appendChild(nestedContent);
-						} else {
-							arrayItem.textContent = `[${index}]: ${truncateString(item)}`;
-							container.appendChild(arrayItem);
-						}
-					});
-					
-					if (value.length > maxArrayLength) {
-						const omitted = document.createElement('p');
-						omitted.style.marginLeft = `${(indent + 1) * indentSize}px`;
-						omitted.style.marginTop = '2px';
-						omitted.style.marginBottom = '2px';
-						omitted.textContent = `... ${value.length - maxArrayLength} more items`;
-						container.appendChild(omitted);
-					}
-					
-				} else if (typeof value === 'object' && value !== null) {
-					// Handle nested objects
-					p.textContent = `${key}:`;
-					container.appendChild(p);
-					const nestedContent = createNestedDisplay(value, indent + 1);
-					container.appendChild(nestedContent);
-					
-				} else {
-					// Handle primitive values
-					p.textContent = `${key}: ${truncateString(value)}`;
-					container.appendChild(p);
-				}
-			});
-			
-			return container;
+	subscription = endpointService.subscribeRaw(configuration, async (message) => {
+		liveDataDiv.innerHTML = "";
+		liveDataDiv.appendChild(createNestedDisplay(message));
+		try {
+			const topicInfo = await endpointService.getTopicInfo(configuration);
+			infoDiv.innerHTML = "";
+			infoDiv.appendChild(createNestedDisplay(topicInfo));
+			status.setOK();
+		} catch (error) {
+			status.setError(error.message);
 		}
-		
-		live_data_div.innerHTML = '';
-		live_data_div.appendChild(createNestedDisplay(msg));
-
-		let results = await rosbridge.get_topic_publishers_and_subscribers(topic);
-		info_div.innerHTML = '';
-		info_div.appendChild(createNestedDisplay(results));
-		
-		status.setOK();
-	});
+	}, deliveryOptions());
 
 	saveSettings();
 }
 
-async function getTopicType(){
-	let results = await rosbridge.get_all_topics();
-	for (let i = 0; i < results.topics.length; i++) {
-		if(results.topics[i] == topic)
-			return results.types[i]
-	}
-	return undefined;
-}
-
-async function loadTopics(){
-	let results = await rosbridge.get_all_topics();
-
-	let topiclist = "";
-	for (let i = 0; i < results.topics.length; i++) {
-		topiclist += `<option value='${results.topics[i]}'>${results.topics[i]} (${results.types[i]})</option>`;
-	}
-	selectionbox.innerHTML = topiclist
-
-	if(topic == ""){
-		topic = selectionbox.value;
-		topic_type = getTopicType();
-	}else{
-		if(results.topics.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", async (event) => {
-	topic = selectionbox.value;
-	topic_type = await getTopicType();
-	connect();
-	saveSettings();
+endpointConfigurationEditor = createRawTopicConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	configuration: endpointConfiguration,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+		connect();
+	},
 });
 
-selectionbox.addEventListener("click", connect);
-icon.addEventListener("click", loadTopics);
+icon.addEventListener("click", () => {
+	endpointConfigurationEditor.refresh();
+});
 
-loadTopics();
+endpointConfigurationEditor.refresh();
 
-console.log("Inspector Widget Loaded {uniqueID}")
+console.log("Inspector Widget Loaded {uniqueID}");

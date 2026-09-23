@@ -2,10 +2,10 @@ import { runTemplateContract } from './template_test_helpers.mjs';
 import assert from 'assert';
 import fs from 'fs';
 
-// Load the production script and replace only its transport import for testing.
+// Load the production script and replace only its adapter discovery dependency.
 let source = fs.readFileSync(new URL('../../public/templates/add/add_script.js', import.meta.url), 'utf8');
-	source = source.replace("let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);\n\nlet rosbridge = rosbridgeModule.rosbridge;", '');
-source = source.replace('rosbridge.get_all_topics()', 'sourceProvider.get_all_topics()');
+source = source.replace("let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);\n\nlet endpointService = endpointServiceModule.endpointService;", '');
+source = source.replace('endpointService.discoverEndpoints()', 'sourceProvider.discoverEndpoints()');
 source += '\nreturn { update_topics };';
 
 // Minimal DOM behavior used by the add-widget script.
@@ -71,12 +71,13 @@ describe('add plugin', function () {
 		]);
 		const calls = [];
 		const sourceProvider = {
-			async get_all_topics() {
-				calls.push('get_all_topics');
-				return {
-					topics: ['/battery', '/ignored', '/odom'],
-					types: ['telemetry/battery', 'telemetry/image', 'telemetry/odometry'],
-				};
+			async discoverEndpoints() {
+				calls.push('discoverEndpoints');
+				return [
+					{ id: '/battery', label: '/battery', messageType: 'telemetry/battery', adapterId: 'test' },
+					{ id: '/ignored', label: '/ignored', messageType: 'telemetry/image', adapterId: 'test' },
+					{ id: '/odom', label: '/odom', messageType: 'telemetry/odometry', adapterId: 'test' },
+				];
 			},
 		};
 		const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -88,7 +89,7 @@ describe('add plugin', function () {
 
 	it('queries available sources when initialized', async function () {
 		const { calls } = await arrange();
-		assert.deepEqual(calls, ['get_all_topics']);
+		assert.deepEqual(calls, ['discoverEndpoints']);
 	});
 
 	it('creates cards only for source types supported by installed widgets', async function () {

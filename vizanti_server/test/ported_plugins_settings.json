@@ -1,0 +1,520 @@
+{
+  "navbar": [
+    { "type": "settings", "id": "test_settings" },
+    { "type": "shell", "id": "test_shell" },
+    { "type": "altimeter", "id": "test_altimeter" },
+    { "type": "area", "id": "test_area" },
+    { "type": "battery", "id": "test_battery" },
+    { "type": "btmanager", "id": "test_btmanager" },
+    { "type": "button", "id": "test_button" },
+    { "type": "compressedimage", "id": "test_compressedimage" },
+    { "type": "folder", "id": "test_folder" },
+    { "type": "grid", "id": "test_grid", "container_id": "test_folder_widget_container" },
+    { "type": "gridcells", "id": "test_gridcells", "container_id": "test_folder_widget_container" },
+    { "type": "initialpose", "id": "test_initialpose" },
+    { "type": "inspector", "id": "test_inspector" },
+    { "type": "map", "id": "test_map" },
+    { "type": "markerarray", "id": "test_markerarray" },
+    { "type": "navball", "id": "test_navball" },
+    { "type": "odom", "id": "test_odom" },
+    { "type": "path", "id": "test_path" },
+    { "type": "pointcloud", "id": "test_pointcloud" },
+    { "type": "posearray", "id": "test_posearray" },
+    { "type": "posewithcovariancestamped", "id": "test_posewithcovariancestamped" },
+    { "type": "range", "id": "test_range" },
+    { "type": "reconfigure", "id": "test_reconfigure" },
+    { "type": "robotmodel", "id": "test_robotmodel" },
+    { "type": "rosbag", "id": "test_rosbag" },
+    { "type": "scan", "id": "test_scan" },
+    { "type": "satelite", "id": "test_satelite" },
+    { "type": "simplegoal", "id": "test_simplegoal" },
+    { "type": "speedometer", "id": "test_speedometer" },
+    { "type": "survey", "id": "test_survey" },
+    { "type": "teleop", "id": "test_teleop" },
+    { "type": "temperature", "id": "test_temperature" },
+    { "type": "tf", "id": "test_tf" },
+    { "type": "waypoints", "id": "test_waypoints" }
+  ],
+  "uid": 0,
+  "view": {
+    "center": { "x": 0, "y": 0 },
+    "scale": 50
+  },
+  "test_settings": {
+    "fixed_frame": "map",
+    "background_color": "#202a36"
+  },
+  "test_shell": {
+    "adapter_configuration": {
+      "adapterId": "ros2",
+      "values": { "namespace": "/test", "tfFrame": "base_link" }
+    },
+    "command": "printf 'vizanti shell ready\\n'",
+    "timeout_seconds": 10,
+    "background": false
+  },
+  "test_altimeter": {
+    "mode": "altitude_positive",
+    "step": 1,
+    "img_offset_x": "0",
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "std_msgs/msg/Float64",
+        "endpointId": "altitude",
+        "manualEndpointId": "altitude",
+        "endpoint": { "topic": "/test/altitude", "nativeMessageType": "std_msgs/msg/Float64" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_area": {
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "geometry_msgs/msg/PolygonStamped",
+        "endpointId": "area",
+        "manualEndpointId": "area",
+        "endpoint": { "topic": "/test/area", "nativeMessageType": "geometry_msgs/msg/PolygonStamped" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_battery": {
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "sensor_msgs/msg/BatteryState",
+        "endpointId": "battery",
+        "manualEndpointId": "battery",
+        "endpoint": { "topic": "/test/battery", "nativeMessageType": "sensor_msgs/msg/BatteryState" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_btmanager": {
+    "root_path": "test/ported_plugins_behavior_trees",
+    "github_url": "",
+    "github_ref": "main",
+    "github_subdirectory": "",
+    "panel_width": "",
+    "maximized": false,
+    "components_hidden": false,
+    "components_width": 0
+  },
+  "test_button": {
+    "action_mode": "bool_topic",
+    "text": "Enable",
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "std_msgs/msg/Bool",
+        "endpointId": "enabled",
+        "manualEndpointId": "enabled",
+        "endpoint": { "topic": "/test/enabled", "nativeMessageType": "std_msgs/msg/Bool" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_compressedimage": {
+    "opacity": "1",
+    "throttle": "100",
+    "width": "30",
+    "resize_policy": "stretch",
+    "custom_width": 200,
+    "custom_height": 100,
+    "img_offset_x": 95,
+    "img_offset_y": 95,
+    "rotation": "0",
+    "last_natural_width": 400,
+    "last_natural_height": 300,
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "sensor_msgs/msg/CompressedImage",
+        "endpointId": "image",
+        "manualEndpointId": "image",
+        "endpoint": { "topic": "/test/image", "nativeMessageType": "sensor_msgs/msg/CompressedImage" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_grid": {
+    "size": 1,
+    "thickness": 1,
+    "colour": "#3e556a",
+    "colour_sub": "#294056",
+    "autoscale": "Coarse",
+    "subdivisions": 2,
+    "frame": "base_link"
+  },
+  "test_gridcells": {
+    "opacity": "1",
+    "color": "#74ce6c",
+    "throttle": "100",
+    "use_timestamp": false,
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "nav_msgs/msg/GridCells",
+        "endpointId": "grid_cells",
+        "manualEndpointId": "grid_cells",
+        "endpoint": { "topic": "/test/grid_cells", "nativeMessageType": "nav_msgs/msg/GridCells" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_initialpose": {
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "geometry_msgs/msg/PoseWithCovarianceStamped",
+        "endpointId": "initialpose",
+        "manualEndpointId": "initialpose",
+        "endpoint": { "topic": "/test/initialpose", "nativeMessageType": "geometry_msgs/msg/PoseWithCovarianceStamped" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_inspector": {
+    "throttle": "500",
+    "endpoint_configuration": {
+      "adapterId": "ros2",
+      "adapterValues": { "namespace": "/test", "tfFrame": "base_link" },
+      "endpointType": "topic",
+      "endpointMode": "manual",
+      "endpointId": "/test/inspection",
+      "manualEndpointId": "/test/inspection",
+      "manualMessageType": "std_msgs/msg/String",
+      "endpoint": { "topic": "/test/inspection", "nativeMessageType": "std_msgs/msg/String" }
+    }
+  },
+  "test_map": {
+    "opacity": "0.7",
+    "colour_scheme": 0,
+    "throttle": "1000",
+    "use_timestamp": false,
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "nav_msgs/msg/OccupancyGrid",
+        "endpointId": "map",
+        "manualEndpointId": "map",
+        "endpoint": { "topic": "/test/map", "nativeMessageType": "nav_msgs/msg/OccupancyGrid" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_markerarray": {
+    "throttle": "100",
+    "opacity": "1",
+    "disabled_namespaces": [],
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "visualization_msgs/msg/MarkerArray",
+        "endpointId": "markers",
+        "manualEndpointId": "markers",
+        "endpoint": { "topic": "/test/markers", "nativeMessageType": "visualization_msgs/msg/MarkerArray" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_navball": {
+    "source_mode": "imu",
+    "tf_frame": "base_link",
+    "opacity": "0.85",
+    "throttle": "30",
+    "width": "10",
+    "offset_x": 50,
+    "offset_y": 95,
+    "angle_mode": "horizon_fake",
+    "alt_roll": false,
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "sensor_msgs/msg/Imu",
+        "endpointId": "imu",
+        "manualEndpointId": "imu",
+        "endpoint": { "topic": "/test/imu", "nativeMessageType": "sensor_msgs/msg/Imu" },
+        "endpointMode": "manual"
+      }
+    }
+  },
+  "test_odom": {
+    "source_mode": "tf",
+    "tf_frame": "pose_tracker",
+    "history": 100,
+    "color": "#54db67",
+    "throttle": 100,
+    "draw_arrows": true,
+    "draw_path": true,
+    "save_history": false,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "nav_msgs/msg/Odometry", "endpointId": "odom", "manualEndpointId": "odom",
+        "endpoint": { "topic": "/test/odom", "nativeMessageType": "nav_msgs/msg/Odometry" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_path": {
+    "color": "#54db67", "throttle": 100, "opacity": 1,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "nav_msgs/msg/Path", "endpointId": "path", "manualEndpointId": "path",
+        "endpoint": { "topic": "/test/path", "nativeMessageType": "nav_msgs/msg/Path" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_posearray": {
+    "scale": 1, "color": "#f74127", "throttle": 100,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "geometry_msgs/msg/PoseArray", "endpointId": "pose_array", "manualEndpointId": "pose_array",
+        "endpoint": { "topic": "/test/pose_array", "nativeMessageType": "geometry_msgs/msg/PoseArray" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_posewithcovariancestamped": {
+    "scale": 1, "color": "#f74127", "decay": 10000, "throttle": 100, "rendermode": "long_arrow",
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "geometry_msgs/msg/PoseWithCovarianceStamped", "endpointId": "pose_with_covariance", "manualEndpointId": "pose_with_covariance",
+        "endpoint": { "topic": "/test/pose_with_covariance", "nativeMessageType": "geometry_msgs/msg/PoseWithCovarianceStamped" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_range": {
+    "opacity": 1, "decay": 3000, "throttle": 100,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "sensor_msgs/msg/Range", "endpointId": "range", "manualEndpointId": "range",
+        "endpoint": { "topic": "/test/range", "nativeMessageType": "sensor_msgs/msg/Range" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_reconfigure": {
+    "adapter_configuration": {
+      "adapterId": "ros2",
+      "values": { "namespace": "/test", "tfFrame": "base_link" }
+    },
+    "node_name": "/vizanti_test_fixture"
+  },
+  "test_robotmodel": {
+    "frame": "base_link",
+    "sprite": "4wd",
+    "robotName": "Test robot",
+    "adapter_configuration": {
+      "adapterId": "ros2",
+      "values": { "namespace": "/test", "tfFrame": "base_link" }
+    },
+    "opacity": 1,
+    "length": 1,
+    "offset_x": 0,
+    "offset_y": 0,
+    "offset_yaw": 0
+  },
+  "test_rosbag": {
+    "path": "/tmp/vizanti-test-recording",
+    "topic_list": ["/test/battery", "/test/path", "/test/scan"],
+    "adapter_configuration": {
+      "adapterId": "ros2",
+      "values": { "namespace": "/test", "tfFrame": "base_link" }
+    }
+  },
+  "test_pointcloud": {
+    "opacity": "1", "thickness": "0.12", "color": "#4ea8de", "throttle": "100",
+    "max_points": "1000", "colour_count": "5", "colour_override": false,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "sensor_msgs/msg/PointCloud2", "endpointId": "point_cloud", "manualEndpointId": "point_cloud",
+        "endpoint": { "topic": "/test/point_cloud", "nativeMessageType": "sensor_msgs/msg/PointCloud2" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_scan": {
+    "opacity": "0.7", "thickness": "0.03", "color": "#e9c46a", "throttle": "100",
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "sensor_msgs/msg/LaserScan", "endpointId": "scan", "manualEndpointId": "scan",
+        "endpoint": { "topic": "/test/scan", "nativeMessageType": "sensor_msgs/msg/LaserScan" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_satelite": {
+    "fixed_point": "map,0.0,0.0,0.0", "server_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "opacity": "0.2", "smoothing": true, "ignore_rotation": false, "use_manual_fix": false, "goto_message_mode": "pose_stamped",
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "sensor_msgs/msg/NavSatFix", "endpointId": "fix", "manualEndpointId": "fix",
+        "endpoint": { "topic": "/test/fix", "nativeMessageType": "sensor_msgs/msg/NavSatFix" }, "endpointMode": "manual"
+      }
+    },
+    "goto_navsatfix_endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "sensor_msgs/msg/NavSatFix", "endpointId": "goto_fix", "manualEndpointId": "goto_fix",
+        "endpoint": { "topic": "/test/goto_fix", "nativeMessageType": "sensor_msgs/msg/NavSatFix" }, "endpointMode": "manual"
+      }
+    },
+    "goto_pose_endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "geometry_msgs/msg/PoseStamped", "endpointId": "goto_pose", "manualEndpointId": "goto_pose",
+        "endpoint": { "topic": "/test/goto_pose", "nativeMessageType": "geometry_msgs/msg/PoseStamped" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_speedometer": {
+    "frame": "base_link", "fixed_frame": "map", "units": "m/s"
+  },
+  "test_survey": {
+    "fixed_frame": "map", "base_link_frame": "base_link", "polygon": [], "start_marker": null, "end_marker": null,
+    "spacing": 1, "angle": 0, "turnaround": 1, "crosshatch": false, "direct_transit": false,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "nav_msgs/msg/Path", "endpointId": "survey_path", "manualEndpointId": "survey_path",
+        "endpoint": { "topic": "/test/survey_path", "nativeMessageType": "nav_msgs/msg/Path" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_teleop": {
+    "color": "#ffffff", "opacity": "0.5", "axis_horiz": "angular_z", "axis_vert": "linear_x",
+    "vel_vert": 1, "vel_horiz": 1, "accel_vert": 2, "accel_horiz": 2,
+    "invert_vert": false, "invert_horiz": false, "ackermann_emulation": true, "instant_stop": false,
+    "keyboard_control": false, "keybindings": { "key_up": "w", "key_left": "a", "key_down": "s", "key_right": "d" },
+    "joy_offset_x": "20%", "joy_offset_y": "85%", "joy_locked": false,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "geometry_msgs/msg/Twist", "endpointId": "cmd_vel", "manualEndpointId": "cmd_vel",
+        "endpoint": { "topic": "/test/cmd_vel", "nativeMessageType": "geometry_msgs/msg/Twist" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_temperature": {
+    "low": "20", "high": "70",
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "sensor_msgs/msg/Temperature", "endpointId": "temperature", "manualEndpointId": "temperature",
+        "endpoint": { "topic": "/test/temperature", "nativeMessageType": "sensor_msgs/msg/Temperature" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_tf": {
+    "show_names": true, "show_axes": true, "show_lines": true, "scale": 1,
+    "frame_visibility": { "map": true, "base_link": true, "pose_tracker": true, "range_sensor": true, "pointcloud_sensor": true, "scan_sensor": true }
+  },
+  "test_waypoints": {
+    "fixed_frame": "map", "base_link_frame": "base_link", "points": [], "margin": 0.8, "start_closest": false,
+    "endpoint_configuration": {
+      "mode": "manual", "robotModelId": "",
+      "manualAdapterConfiguration": { "adapterId": "ros2", "values": { "namespace": "/test", "tfFrame": "base_link" } },
+      "endpointConfiguration": {
+        "endpointValues": {}, "outputMessageId": "nav_msgs/msg/Path", "endpointId": "waypoint_path", "manualEndpointId": "waypoint_path",
+        "endpoint": { "topic": "/test/waypoint_path", "nativeMessageType": "nav_msgs/msg/Path" }, "endpointMode": "manual"
+      }
+    }
+  },
+  "test_simplegoal": {
+    "endpoint_configuration": {
+      "mode": "manual",
+      "robotModelId": "",
+      "manualAdapterConfiguration": {
+        "adapterId": "ros2",
+        "values": { "namespace": "/test", "tfFrame": "base_link" }
+      },
+      "endpointConfiguration": {
+        "endpointValues": {},
+        "outputMessageId": "geometry_msgs/msg/Pose",
+        "endpointId": "goal",
+        "manualEndpointId": "goal",
+        "endpoint": { "topic": "/test/goal", "nativeMessageType": "geometry_msgs/msg/Pose" },
+        "endpointMode": "manual"
+      }
+    }
+  }
+}

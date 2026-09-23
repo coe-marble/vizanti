@@ -1,28 +1,31 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.RANGE;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let range_topic = undefined;
-let listener = undefined;
+let subscription = undefined;
 
 let data = {};
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
 
 const opacitySlider = document.getElementById('{uniqueID}_opacity');
@@ -53,7 +56,7 @@ throttle.addEventListener("input", (event) =>{
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 
 	opacitySlider.value = loaded_data.opacity;
 	opacityValue.innerText = loaded_data.opacity;
@@ -66,7 +69,7 @@ if(settings.hasOwnProperty("{uniqueID}")){
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		opacity: opacitySlider.value,
 		decay: decay.value,
 		throttle: throttle.value
@@ -177,59 +180,42 @@ window.addEventListener("view_changed", drawRanges);
 window.addEventListener('resize', resizeScreen);
 window.addEventListener('orientationchange', resizeScreen);
 
-//Topic
-
 const RADIATION_TYPE = {
 	0: "Ultrasound",
 	1: "Infrared"
 }
 
 function connect(){
-
-	if(topic == ""){
-		status.setError("Empty topic.");
+	if (subscription) subscription.unsubscribe();
+	subscription = undefined;
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No range endpoint configured.");
 		return;
 	}
-
-	if(range_topic !== undefined){
-		range_topic.unsubscribe(listener);
-	}
-
-	range_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'sensor_msgs/msg/Range',
-		compression: rosbridge.compression,
-		throttle_rate: parseInt(throttle.value),
-		queue_length: 1
-	});
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");	
-	listener = range_topic.subscribe((msg) => {
-
-		let error = false;
-		if(msg.header.frame_id == ""){
-			status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-			msg.header.frame_id = tf.fixed_frame;
-			error = true;
-		}
-
-		const pose = tf.getAbsoluteTransform(msg.header);
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		const frameId = message.frameId || tf.fixed_frame;
+		const hasWarning = message.frameId === "";
+		const pose = tf.getAbsoluteTransform({ frameId, stamp: message.stamp });
 
 		if(!pose){
-			status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
+			status.setError(`Required transform frame "${frameId}" not found.`);
 			return;
 		}
 
-		text_range.innerText = "Range: "+msg.range.toFixed(3)+" m";
-		text_min.innerText = "Min: "+msg.min_range.toFixed(3)+" m";
-		text_max.innerText = "Max: "+msg.max_range.toFixed(3)+" m";
-		text_fov.innerText = "Field of view: "+(msg.field_of_view * (180/Math.PI)).toFixed(2)+"°";
-		text_type.innerText = "Type: "+RADIATION_TYPE[msg.radiation_type];
+		text_range.innerText = `Range: ${message.range.toFixed(3)} m`;
+		text_min.innerText = `Min: ${message.minRange.toFixed(3)} m`;
+		text_max.innerText = `Max: ${message.maxRange.toFixed(3)} m`;
+		text_fov.innerText = `Field of view: ${(message.fieldOfView * (180 / Math.PI)).toFixed(2)}°`;
+		text_type.innerText = `Type: ${RADIATION_TYPE[message.radiationType]}`;
 
 		const front_vector = endpointService.applyRotation(
 			{
-				x: msg.max_range, 
+				x: message.maxRange,
 				y: 0,
 				z: 0 
 			}, 
@@ -239,69 +225,45 @@ function connect(){
 
 		//calculate the new values for displaying the cone in a rotated projection
 		const yaw = Math.atan2(front_vector.y, front_vector.x);
-		const ratio = Math.hypot(front_vector.y, front_vector.x) / msg.max_range;
+		const ratio = Math.hypot(front_vector.y, front_vector.x) / message.maxRange;
 
-		const cone_half_width = Math.tan(msg.field_of_view * 0.5) * msg.max_range;
-		const ratio_fov = 2 * Math.atan(cone_half_width / (ratio * msg.max_range));
+		const cone_half_width = Math.tan(message.fieldOfView * 0.5) * message.maxRange;
+		const ratio_fov = 2 * Math.atan(cone_half_width / (ratio * message.maxRange));
 
-		data[msg.header.frame_id] = {
+		data[frameId] = {
 			yaw: yaw,
 			cone_half_width: cone_half_width,
 			field_of_view: ratio_fov,
-			min_range: ratio * msg.min_range,
-			max_range: ratio * msg.max_range,
-			range: ratio * msg.range,
-			type: msg.radiation_type,
+			min_range: ratio * message.minRange,
+			max_range: ratio * message.maxRange,
+			range: ratio * message.range,
+			type: message.radiationType,
 			pose: pose,
 			stamp: new Date()
 		}
 		drawRanges();
 
-		if(!error){
-			status.setOK();
-		}
-	});
+		if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+		else status.setOK();
+	}, { throttleRate: parseInt(throttle.value), queueLength: 1 });
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("sensor_msgs/msg/Range");
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	text_range.innerText = "Range: ?";
-	text_min.innerText = "Min: ?";
-	text_max.innerText = "Max: ?";
-	text_fov.innerText = "Field of view: ?";
-	text_type.innerText = "Type: ?";
-
-	topic = selectionbox.value;
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		data = {};
+		connect();
+	},
 });
-
-selectionbox.addEventListener("click", connect);
-icon.addEventListener("click", loadTopics);
-
-loadTopics();
+endpointConfigurationEditor.refresh();
 resizeScreen();
 
 console.log("Range Widget Loaded {uniqueID}")

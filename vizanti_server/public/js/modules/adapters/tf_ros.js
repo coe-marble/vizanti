@@ -223,13 +223,16 @@ export class TFRos {
 	}
 
 	getAbsoluteTransform(header) {
-		if (header.frame_id === this.fixed_frame)
+		const frameId = typeof header.frameId === "string" ? header.frameId : header.frame_id;
+		if (frameId === this.fixed_frame)
 			return this.getZeroFrame();
-		const buf = this.absoluteTransformBuffers[header.frame_id];
+		const buf = this.absoluteTransformBuffers[frameId];
 		if (!buf)
-			return this.absoluteTransforms[header.frame_id];
+			return this.absoluteTransforms[frameId];
 		const stamp = header.stamp || {};
-		return buf.nearest(stamp.secs, stamp.nsecs) || this.absoluteTransforms[header.frame_id];
+		const secs = stamp.sec === undefined ? stamp.secs : stamp.sec;
+		const nsecs = stamp.nanosec === undefined ? stamp.nsecs : stamp.nanosec;
+		return buf.nearest(secs, nsecs) || this.absoluteTransforms[frameId];
 	}
 
 	// Timestamp-aware drop-in for transformPose(frame, fixed_frame, position, orientation).

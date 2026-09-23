@@ -4,12 +4,9 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
-		<label for="{uniqueID}_topic">Topic:</label>
-		<select id="{uniqueID}_topic" name="topic">
-			<!-- add topics here-->
-		</select>
+		<div id="{uniqueID}_endpoint_configuration"></div>
 
-		<p>Display a nav_msgs/OccupancyGrid message that typically represents a 2D map or navigational costmap.</p>
+		<p>Display an occupancy grid that typically represents a 2D map or navigational costmap.</p>
 
 		<hr class="dark_hr"/>
 		<div class="spacer"></div>
@@ -39,7 +36,7 @@
 
 		<div class="spacer"></div>
 
-		<label for="{uniqueID}_throttle">Socket throttle (ms):</label>
+		<label for="{uniqueID}_throttle">Delivery throttle (ms):</label>
 		<input type="number" value="1000" step="0" min="0" max="10000" id="{uniqueID}_throttle">
 
 		<div class="spacer"></div>

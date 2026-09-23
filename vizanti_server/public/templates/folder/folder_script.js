@@ -1,9 +1,7 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let imageToDataURL = utilModule.imageToDataURL;
 let Status = StatusModule.Status;

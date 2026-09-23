@@ -1,20 +1,25 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
 let applyRotation = endpointService.applyRotation.bind(endpointService);
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 let imageToDataURL = utilModule.imageToDataURL;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.POSE_WITH_COVARIANCE;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
@@ -23,9 +28,7 @@ let status = new Status(
 const icon_pose = 'assets/pose.svg'//await imageToDataURL('assets/pose.svg');
 const icon_pose_with_covariance = 'assets/posewithcovariancestamped.svg'//await imageToDataURL('assets/posewithcovariancestamped.svg');
 
-let typedict = {};
-let listener = undefined;
-let marker_topic = undefined;
+let subscription = undefined;
 
 let posemsg = undefined;
 let frame = "";
@@ -39,7 +42,6 @@ const text_pitch = document.getElementById("{uniqueID}_live_pitch");
 const text_yaw = document.getElementById("{uniqueID}_live_yaw");
 
 const rendermodebox = document.getElementById("{uniqueID}_rendermode");
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const click_icon = document.getElementById("{uniqueID}_icon");
 const icon = click_icon.getElementsByTagName('object')[0];
 
@@ -77,14 +79,12 @@ const ctx = canvas.getContext('2d', { colorSpace: 'srgb' });
 //Settings
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 
 	colourpicker.value = loaded_data.color ?? "#f74127";
 
 	scaleSlider.value = loaded_data.scale;
 	scaleSliderValue.textContent = scaleSlider.value;
-
-	typedict = loaded_data.typedict ?? {};
 
 	decay.value = loaded_data.decay ?? 10000;
 	throttle.value = loaded_data.throttle ?? 100;
@@ -106,9 +106,8 @@ if (icon.contentDocument) {
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		scale: parseFloat(scaleSlider.value),
-		typedict: typedict,
 		color: colourpicker.value,
 		decay: decay.value,
 		throttle: throttle.value,
@@ -323,50 +322,32 @@ function calculateEigen(covariance){
 	}
 }
 
-//Topic
 function connect(){
-
-	if(topic == ""){
-		status.setError("Empty topic.");
+	if (subscription) subscription.unsubscribe();
+	subscription = undefined;
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No pose endpoint configured.");
 		return;
 	}
-
-	if(marker_topic !== undefined){
-		marker_topic.unsubscribe(listener);
-	}
-
-	marker_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : typedict[topic],
-		throttle_rate: parseInt(throttle.value),
-		queue_length: 1
-	});
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");
-
-	const skip_covariance = typedict[topic] == "geometry_msgs/msg/PoseStamped";
+	const skip_covariance = configuration.endpoint.nativeMessageType === "geometry_msgs/msg/PoseStamped";
 	icon.data = skip_covariance ? icon_pose : icon_pose_with_covariance;
-	
-	listener = marker_topic.subscribe((msg) => {
-
-		let error = false;
-		if(msg.header.frame_id == ""){
-			status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-			msg.header.frame_id = tf.fixed_frame;
-			error = true;
-		}
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		const frameId = message.frameId || tf.fixed_frame;
+		const hasWarning = message.frameId === "";
 		
-		if(!tf.absoluteTransforms[msg.header.frame_id]){
-			status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
+		if(!tf.absoluteTransforms[frameId]){
+			status.setError(`Required transform frame "${frameId}" not found.`);
 			return;
 		}
 
 		frame = tf.fixed_frame;
 
-		let pose = skip_covariance ? msg.pose : msg.pose.pose;
-
-		let q = pose.orientation;
+		let q = message.orientation;
 		const rotation_invalid = q.x == 0 && q.y == 0 && q.z == 0 && q.w == 0
 
 		if(rotation_invalid){
@@ -375,8 +356,8 @@ function connect(){
 		}
 
 		const transformed = tf.transformPoseStamped(
-			msg.header,
-			pose.position, 
+			{ frameId, stamp: message.stamp },
+			message.position,
 			q
 		);
 
@@ -388,86 +369,47 @@ function connect(){
 			quat: transformed.rotation,
 			yaw: transformed.rotation.toEuler().h,
 			rotation_invalid: rotation_invalid,
-			covariance: skip_covariance ? undefined : msg.pose.covariance,
-			eigenvalues: skip_covariance ? undefined : calculateEigen(msg.pose.covariance),
+			covariance: skip_covariance ? undefined : message.covariance,
+			eigenvalues: skip_covariance ? undefined : calculateEigen(message.covariance),
 			stamp: new Date()
 		};
 
 		let angles = (new Quaternion(q)).toEuler()
-		text_x.innerText = "X: "+pose.position.x.toFixed(2)+" m";
-		text_y.innerText = "Y: "+pose.position.y.toFixed(2)+" m";
-		text_z.innerText = "Z: "+pose.position.z.toFixed(2)+" m";
-		text_dist.innerText = "Distance: "+Math.hypot(pose.position.x, pose.position.y, pose.position.z).toFixed(2)+" m";
+		text_x.innerText = "X: "+message.position.x.toFixed(2)+" m";
+		text_y.innerText = "Y: "+message.position.y.toFixed(2)+" m";
+		text_z.innerText = "Z: "+message.position.z.toFixed(2)+" m";
+		text_dist.innerText = "Distance: "+Math.hypot(message.position.x, message.position.y, message.position.z).toFixed(2)+" m";
 		text_roll.innerText = "Roll: "+(angles.g * (180/Math.PI)).toFixed(1)+"°";
 		text_pitch.innerText = "Pitch: "+(angles.pitch * (180/Math.PI)).toFixed(1)+"°";
 		text_yaw.innerText = "Yaw: "+(angles.h * (180/Math.PI)).toFixed(1)+"°";
 	
 		drawMarkers();
 		
-		if(!error){
-			status.setOK();
-		}
-	});
+		if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+		else status.setOK();
+	}, { throttleRate: parseInt(throttle.value), queueLength: 1 });
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let pose_topics = await rosbridge.get_topics("geometry_msgs/msg/PoseStamped");
-	let posecov_topics = await rosbridge.get_topics("geometry_msgs/msg/PoseWithCovarianceStamped");
-
-	let topiclist = "";
-	pose_topics.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (PoseStamped)</option>"
-		typedict[element] = "geometry_msgs/msg/PoseStamped";
-	});
-	posecov_topics.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (PoseWithCovarianceStamped)</option>"
-		typedict[element] = "geometry_msgs/msg/PoseWithCovarianceStamped";
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(pose_topics.includes(topic) || posecov_topics.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	text_x.innerText = "X: ?";
-	text_y.innerText = "Y: ?";
-	text_z.innerText = "Z: ?";
-	text_dist.innerText = "Distance: ?";
-	text_roll.innerText = "Roll: ?";
-	text_pitch.innerText = "Pitch: ?";
-	text_yaw.innerText = "Yaw: ?";
-
-	topic = selectionbox.value;
-	posemsg = undefined;
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		posemsg = undefined;
+		connect();
+	},
 });
-
-selectionbox.addEventListener("click", (event) => {
-	connect();
-});
-
-click_icon.addEventListener("click", (event) => {
-	loadTopics();
-});
+endpointConfigurationEditor.refresh();
 
 rendermodebox.addEventListener("change", (event) => {
 	saveSettings();
 });
-
-loadTopics();
 
 function resizeScreen(){
 	canvas.height = window.innerHeight;

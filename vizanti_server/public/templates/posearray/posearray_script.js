@@ -1,27 +1,29 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.POSE_ARRAY;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let listener = undefined;
-let poses_topic = undefined;
-
-let typedict = {};
+let subscription = undefined;
 let poses = [];
 let frame = "";
 
@@ -48,7 +50,6 @@ throttle.addEventListener("input", (event) =>{
 	connect();
 });
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const click_icon = document.getElementById("{uniqueID}_icon");
 const icon = click_icon.getElementsByTagName('object')[0];
 
@@ -58,16 +59,13 @@ const ctx = canvas.getContext('2d', { colorSpace: 'srgb' });
 //Settings
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 
 	colourpicker.value = loaded_data.color ?? "#f74127";
 
 	scaleSlider.value = loaded_data.scale;
 	scaleSliderValue.textContent = scaleSlider.value;
 	throttle.value = loaded_data.throttle ?? 100;
-
-	if(loaded_data.topic_type != undefined)
-		typedict[topic] = loaded_data.topic_type;
 
 }else{
 	saveSettings();
@@ -83,8 +81,7 @@ if (icon.contentDocument) {
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
-		topic_type: typedict[topic],
+		endpoint_configuration: endpointConfiguration,
 		scale: parseFloat(scaleSlider.value),
 		color: colourpicker.value,
 		throttle: throttle.value
@@ -162,130 +159,63 @@ async function drawArrows(){
 	}
 }
 
-//Topic
 function connect(){
-
-	if(topic == ""){
-		status.setError("Empty topic.");
+	if (subscription) subscription.unsubscribe();
+	subscription = undefined;
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No pose array endpoint configured.");
 		return;
 	}
-
-	if(poses_topic !== undefined){
-		poses_topic.unsubscribe(listener);
-	}
-
-	poses_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : typedict[topic],
-		throttle_rate: parseInt(throttle.value),
-		compression: rosbridge.compression,
-		queue_length: 1
-	});
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");
-	
-	listener = poses_topic.subscribe((msg) => {
-		let error = false;
-		if(msg.header.frame_id == ""){
-			status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-			msg.header.frame_id = tf.fixed_frame;
-			error = true;
-		}
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		const frameId = message.frameId || tf.fixed_frame;
+		const hasWarning = message.frameId === "";
 
-		if(!tf.absoluteTransforms[msg.header.frame_id]){
-			status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
+		if(!tf.absoluteTransforms[frameId]){
+			status.setError(`Required transform frame "${frameId}" not found.`);
 			return;
 		}
 
 		poses = [];
 		frame = tf.fixed_frame;
 
-		if(typedict[topic] == "geometry_msgs/msg/PoseArray"){
-			msg.poses.forEach(p => {
-				const transformed = tf.transformPoseStamped(
-					msg.header,
-					p.position, 
-					p.orientation
-				);
-
-				poses.push({
-					x: transformed.translation.x,
-					y: transformed.translation.y,
-					yaw: transformed.rotation.toEuler().h
-				});
+		message.poses.forEach((pose) => {
+			const transformed = tf.transformPoseStamped(
+				{ frameId, stamp: message.stamp }, pose.position, pose.orientation
+			);
+			poses.push({
+				x: transformed.translation.x,
+				y: transformed.translation.y,
+				yaw: transformed.rotation.toEuler().h,
 			});
-		}else{ //nav2_msgs/msg/ParticleCloud
-			msg.particles.forEach(p => {
-				const transformed = tf.transformPoseStamped(
-					msg.header,
-					p.pose.position, 
-					p.pose.orientation
-				);
-
-				poses.push({
-					x: transformed.translation.x,
-					y: transformed.translation.y,
-					yaw: transformed.rotation.toEuler().h
-				});
-			});
-		}
-
+		});
 
 		drawArrows();
-
-		if(!error){
-			status.setOK();
-		}		
-	});
+		if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+		else status.setOK();
+	}, { throttleRate: parseInt(throttle.value), queueLength: 1 });
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	const result_posearray = await rosbridge.get_topics("geometry_msgs/msg/PoseArray");
-	const result_particlecloud = await rosbridge.get_topics("nav2_msgs/msg/ParticleCloud");
-
-	let topiclist = "";
-	result_posearray.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (PoseArray)</option>"
-		typedict[element] = "geometry_msgs/msg/PoseArray";
-	});
-	result_particlecloud.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (ParticleCloud)</option>"
-		typedict[element] = "nav2_msgs/msg/ParticleCloud";
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result_posearray.includes(topic) || result_particlecloud.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	poses = [];
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		poses = [];
+		connect();
+	},
 });
-
-selectionbox.addEventListener("click", (event) => {
-	connect();
-});
-
-click_icon.addEventListener("click", (event) => {
-	loadTopics();
-});
-
-loadTopics();
+endpointConfigurationEditor.refresh();
 
 function resizeScreen(){
 	canvas.height = window.innerHeight;

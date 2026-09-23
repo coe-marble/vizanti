@@ -1,29 +1,32 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.LASER_SCAN;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let range_topic = undefined;
-let listener = undefined;
+let subscription = undefined;
 
 let data = undefined;
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const click_icon = document.getElementById("{uniqueID}_icon");
 const icon = click_icon.getElementsByTagName('object')[0];
 
@@ -75,7 +78,7 @@ throttle.addEventListener("input", (event) =>{
 //Settings
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 
 	opacitySlider.value = loaded_data.opacity;
 	setOpacityText(loaded_data.opacity);
@@ -100,7 +103,7 @@ if (icon.contentDocument) {
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		opacity: opacitySlider.value,
 		thickness: thicknessSlider.value,
 		color: colourpicker.value,
@@ -168,24 +171,15 @@ function radToDeg(val){
 }
 
 function connect(){
-
-	if(topic == ""){
-		status.setError("Empty topic.");
+	if (subscription) subscription.unsubscribe();
+	subscription = undefined;
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No laser scan endpoint configured.");
 		return;
 	}
-
-	if(range_topic !== undefined){
-		range_topic.unsubscribe(listener);
-	}
-
-	range_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'sensor_msgs/msg/LaserScan',
-		throttle_rate: parseInt(throttle.value),
-		compression: rosbridge.compression,
-		queue_length: 1
-	});
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");
 	text_angle.innerText = "Angle: ?";
@@ -196,34 +190,28 @@ function connect(){
 	text_min.innerText = "Min: ?";
 	text_max.innerText = "Max: ?";
 
-	listener = range_topic.subscribe((msg) => {	
-
-		let error = false;
-		if(msg.header.frame_id == ""){
-			status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-			msg.header.frame_id = tf.fixed_frame;
-			error = true;
-		}
-
-		let pose = tf.getAbsoluteTransform(msg.header);
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		const frameId = message.frameId || tf.fixed_frame;
+		const hasWarning = message.frameId === "";
+		const pose = tf.getAbsoluteTransform({ frameId, stamp: message.stamp });
 		
 		if(!pose){
-			status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
+			status.setError(`Required transform frame "${frameId}" not found.`);
 			return;
 		}
 
-		text_angle.innerText = "Angle: "+radToDeg(msg.angle_min)+"°"+" to "+radToDeg(msg.angle_max)+"°";
-		text_angleinc.innerText = "Angle increment: "+radToDeg(msg.angle_increment)+"°";
-		text_frame.innerText = "TF frame: "+msg.header.frame_id;
-		text_pointscount.innerText = "Points: "+msg.ranges.length;
-		text_scantime.innerText = "Scan time: "+msg.scan_time.toFixed(5)+" s";
-		text_min.innerText = "Min: "+msg.range_min.toFixed(2)+" m";
-		text_max.innerText = "Max: "+msg.range_max.toFixed(2)+" m";
+		text_angle.innerText = "Angle: "+radToDeg(message.angleMin)+"°"+" to "+radToDeg(message.angleMax)+"°";
+		text_angleinc.innerText = "Angle increment: "+radToDeg(message.angleIncrement)+"°";
+		text_frame.innerText = "TF frame: "+frameId;
+		text_pointscount.innerText = "Points: "+message.ranges.length;
+		text_scantime.innerText = "Scan time: "+message.scanTime.toFixed(5)+" s";
+		text_min.innerText = "Min: "+message.rangeMin.toFixed(2)+" m";
+		text_max.innerText = "Max: "+message.rangeMax.toFixed(2)+" m";
 
 		let rotatedPointCloud = [];
-		msg.ranges.forEach(function (item, index) {
-			if (item >= msg.range_min && item <= msg.range_max) {
-				const angle = msg.angle_min + index * msg.angle_increment;
+		message.ranges.forEach(function (item, index) {
+			if (item >= message.rangeMin && item <= message.rangeMax) {
+				const angle = message.angleMin + index * message.angleIncrement;
 				rotatedPointCloud.push(endpointService.applyRotation(
 					{
 						x: item * Math.cos(angle), 
@@ -241,46 +229,27 @@ function connect(){
 		data.points = rotatedPointCloud
 		drawScan();
 
-		if(!error){
-			status.setOK();
-		}
-	});
+		if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+		else status.setOK();
+	}, { throttleRate: parseInt(throttle.value), queueLength: 1 });
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("sensor_msgs/msg/LaserScan");
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	data = undefined;
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		data = undefined;
+		connect();
+	},
 });
-
-selectionbox.addEventListener("click", connect);
-click_icon.addEventListener("click", loadTopics);
-
-loadTopics();
+endpointConfigurationEditor.refresh();
 resizeScreen();
 
 console.log("Laserscan Widget Loaded {uniqueID}")

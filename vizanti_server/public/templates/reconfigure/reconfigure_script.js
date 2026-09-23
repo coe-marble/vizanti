@@ -1,6 +1,10 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let adapterConfigurationEditorModule = await import(`${base_url}/js/modules/adapter_configuration_editor.js`);
+let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
+let endpointService = endpointServiceModule.endpointService;
+let createAdapterConfigurationEditor = adapterConfigurationEditorModule.createAdapterConfigurationEditor;
+let settings = persistentModule.settings;
 
 const PARAM_TYPES = [
 	"NOT_SET",		//0
@@ -20,47 +24,33 @@ const nodeSelector = document.getElementById("{uniqueID}_node");
 const loaderSpinner = document.getElementById("{uniqueID}_loader");
 const paramBox = document.getElementById("{uniqueID}_params");
 const refreshButton = document.getElementById("{uniqueID}_refresh");
+const adapterConfigurationContainer = document.getElementById("{uniqueID}_adapter_configuration");
 
 let nodeName = "";
 let cached_params = {};
+let adapterConfiguration = null;
+let adapterConfigurationEditor;
+
+if (settings.hasOwnProperty("{uniqueID}")) {
+	const loadedData = settings["{uniqueID}"];
+	adapterConfiguration = loadedData.adapter_configuration || null;
+	nodeName = loadedData.node_name || "";
+}
+
+function saveSettings() {
+	settings["{uniqueID}"] = {
+		adapter_configuration: adapterConfiguration,
+		node_name: nodeName,
+	};
+	settings.save();
+}
 
 async function getNodeParameters(node) {
-	const getNodeParametersService = new ROSLIB.Service({
-		ros: rosbridge.ros,
-		name: "/vizanti/get_node_parameters",
-		serviceType: "vizanti_msgs/srv/GetNodeParameters",
-	});
-
-	return new Promise((resolve, reject) => {
-		const request = new ROSLIB.ServiceRequest({ node });
-		getNodeParametersService.callService(request, (result) => {
-			resolve(JSON.parse(result.parameters));
-		}, (error) => {
-			reject(error);
-		});
-	});
+	return endpointService.getNodeParameters(adapterConfiguration, node);
 }
 
 async function setNodeParameter(node, param, newValue) {
-	const setParamClient = new ROSLIB.Service({
-		ros: rosbridge.ros,
-		name: '/vizanti/set_node_parameter',
-		serviceType: 'vizanti_msgs/srv/SetNodeParameter',
-	});
-
-	return new Promise((resolve, reject) => {
-		const request = new ROSLIB.ServiceRequest({
-			 node: node+"",
-			 param: param.toLocaleString('en-US'),
-			 value: newValue.toLocaleString('en-US')
-		});
-		setParamClient.callService(request, (response) => {
-			resolve(response);
-		}, (error) => {
-			console.error(`Failed to call set_parameters service for ${node}:`, error);
-			reject(error);
-		});
-	});
+	return endpointService.setNodeParameter(adapterConfiguration, node, param, newValue);
 }
 
 
@@ -189,15 +179,13 @@ async function listParameters(){
 }
 
 async function setNodeList(){
-	let results = await rosbridge.get_all_nodes();
+	let results = await endpointService.listNodes(adapterConfiguration);
 	let nodelist = "";
 	let value = "";
 	let nodes = [];
-	for (const node of results.nodes) {
-		if(!node.includes("vizanti")){
-			nodelist += "<option value='"+node+"'>"+node+"</option>"
-			nodes.push(node);
-		}
+	for (const node of results) {
+		nodelist += "<option value='"+node+"'>"+node+"</option>"
+		nodes.push(node);
 
 		if(node.includes(nodeName)){
 			value = nodeName;
@@ -212,15 +200,29 @@ async function setNodeList(){
 	else
 		nodeSelector.value = value;
 
+	saveSettings();
 	listParameters();
 }
 
 nodeSelector.addEventListener("change", (event)=>{
 	nodeName = nodeSelector.value;
+	saveSettings();
 	listParameters();
 });
 
 refreshButton.addEventListener("click", listParameters);
 icon.addEventListener("click", setNodeList);
+
+adapterConfigurationEditor = createAdapterConfigurationEditor({
+	container: adapterConfigurationContainer,
+	endpointService,
+	configuration: adapterConfiguration,
+	onChange(configuration) {
+		adapterConfiguration = configuration;
+		cached_params = {};
+		saveSettings();
+	},
+});
+adapterConfigurationEditor.refresh();
 
 console.log("Reconfigure Widget Loaded {uniqueID}");

@@ -1,6 +1,8 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
@@ -8,8 +10,9 @@ let dbModule = await import(`${base_url}/js/modules/database.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
@@ -17,28 +20,27 @@ const db = new dbModule.IndexedDatabase('odom_history');
 await db.openDB();
 const DB_KEY = "odom_pose_history_{uniqueID}";
 
-let topic = getTopic("{uniqueID}");
-
-if(topic != "")
-	topic += " (Odometry)";
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.ODOMETRY;
 
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let listener = undefined;
-let odom_topic = undefined;
+let subscription = undefined;
 
 let sample_array = [];
 
-let mode = "" //see setMode()
+let mode = "topic";
 let raw_target = "";
 
 const text_point_count = document.getElementById("{uniqueID}_points_text");
 const text_total_dist = document.getElementById("{uniqueID}_distance_text");
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
+const sourceMode = document.getElementById("{uniqueID}_source_mode");
+const selectionbox = document.getElementById("{uniqueID}_tf_frame");
 const click_icon = document.getElementById("{uniqueID}_icon");
 const icon = click_icon.getElementsByTagName('object')[0];
 
@@ -143,7 +145,10 @@ downloadCSVButton.addEventListener('click', () => {
 //Settings
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
+	mode = loaded_data.source_mode === "tf" ? "tf" : "topic";
+	raw_target = loaded_data.tf_frame || "";
+	sourceMode.value = mode;
 
 	historypicker.value = loaded_data.history;
 	drawarrows.checked = loaded_data.draw_arrows;
@@ -151,7 +156,6 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	throttle.value = loaded_data.throttle;
 	colourpicker.value = loaded_data.color ?? "#54db67";
 	save_history.checked = loaded_data.save_history ?? true;
-	setMode();
 }else{
 	saveSettings();
 }
@@ -169,9 +173,10 @@ if (icon.contentDocument) {
 }
 
 function saveSettings(){
-	setMode();
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
+		source_mode: mode,
+		tf_frame: raw_target,
 		history: historypicker.value,
 		color: colourpicker.value,
 		throttle: throttle.value,
@@ -336,128 +341,92 @@ function appendPose(pose){
 	return true;
 }
 
-//Topic
 function connect(){
-	if(odom_topic !== undefined){
-		odom_topic.unsubscribe(listener);
-	}
-
-	if(mode != "topic")
-		return;
-
-	if(topic == ""){
-		status.setError("No target.");
+	if (subscription) subscription.unsubscribe();
+	subscription = undefined;
+	if (mode !== "topic") return;
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No odometry endpoint configured.");
 		return;
 	}
-
-	odom_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : raw_target,
-		messageType : 'nav_msgs/msg/Odometry',
-		throttle_rate: parseInt(throttle.value),
-		compression: rosbridge.compression,
-		queue_length: 1
-	});
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");
-	
-	listener = odom_topic.subscribe((msg) => {
-		
-		let error = false;
-		if(msg.header.frame_id == ""){
-			status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-			msg.header.frame_id = tf.fixed_frame;
-			error = true;
-		}
-
-		const frame = tf.absoluteTransforms[msg.header.frame_id];
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		const frameId = message.frameId || tf.fixed_frame;
+		const hasWarning = message.frameId === "";
+		const frame = tf.absoluteTransforms[frameId];
 
 		if(!frame){
-			status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
-			error = true;
+			status.setError(`Required transform frame "${frameId}" not found.`);
 			return;
 		}
 
 		const transformed = tf.transformPose(
-			msg.header.frame_id,
-			tf.fixed_frame, 
-			msg.pose.pose.position, 
-			msg.pose.pose.orientation
-		)
+			frameId, tf.fixed_frame, message.position, message.orientation
+		);
 
 		if(appendPose(transformed)){
 			drawHistory();
-			if(!error){
-				status.setOK();
-			}
+			if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+			else status.setOK();
 		}
-	});
+	}, { throttleRate: parseInt(throttle.value), queueLength: 1 });
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let odom_array = await rosbridge.get_topics("nav_msgs/msg/Odometry");
-	let tf_array = Array.from(tf.frame_list);
-
-	let topiclist = "";
-	odom_array.forEach(element => {
-		topiclist += "<option value='"+element+" (Odometry)'>"+element+" (Odometry)</option>"
-	});
-
-	tf_array.forEach(frame => {
-		topiclist += "<option value='"+frame+" (Frame)'>"+frame+" (Frame)</option>"
-	});
-
-	selectionbox.innerHTML = topiclist
-
-	if(topic == ""){
-		topic = selectionbox.value;
-		setMode();
-	}else{
-		setMode();
-		if(odom_array.includes(raw_target) || tf_array.includes(raw_target)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-
-	connect();
+function loadFrames(){
+	const frames = Array.from(tf.frame_list);
+	selectionbox.innerHTML = frames.map((frame) => `<option value="${frame}">${frame}</option>`).join("");
+	if (raw_target && frames.includes(raw_target)) selectionbox.value = raw_target;
+	else if (frames.length > 0) raw_target = selectionbox.value;
+	if (mode === "tf") saveSettings();
 }
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
+selectionbox.addEventListener("change", () => {
+	raw_target = selectionbox.value;
+	sample_array = [];
+	saveSettings();
+	drawHistory();
+});
+
+click_icon.addEventListener("click", () => {
+	loadFrames();
+	updateTextDisplay();
+});
+
+sourceMode.addEventListener("change", () => {
+	mode = sourceMode.value;
+	document.getElementById("{uniqueID}_endpoint_source").style.display = mode === "topic" ? "" : "none";
+	document.getElementById("{uniqueID}_tf_source").style.display = mode === "tf" ? "" : "none";
+	loadFrames();
 	sample_array = [];
 	saveSettings();
 	connect();
 });
 
-selectionbox.addEventListener("click", (event) => {
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		sample_array = [];
+		connect();
+	},
 });
+endpointConfigurationEditor.refresh();
 
-click_icon.addEventListener("click", (event) => {
-	loadTopics();
-	updateTextDisplay();
-});
-
-loadTopics();
-
-function setMode(){
-	if(topic.endsWith("(Frame)")){
-		mode = "tf";
-		raw_target = topic.replace(" (Frame)", "");
-	}else if(topic.endsWith("(Odometry)")){
-		mode = "topic";
-		raw_target = topic.replace(" (Odometry)", "");
-	}else{
-		mode = "";
-		raw_target = "";
-	}
-}
+document.getElementById("{uniqueID}_endpoint_source").style.display = mode === "topic" ? "" : "none";
+document.getElementById("{uniqueID}_tf_source").style.display = mode === "tf" ? "" : "none";
+loadFrames();
+connect();
 
 function resizeScreen(){
 	canvas.height = window.innerHeight;
@@ -468,6 +437,7 @@ function resizeScreen(){
 let tf_throttle_stamp = 0;
 window.addEventListener("tf_changed", ()=>{
 	if(mode == "tf"){
+		if (raw_target === "") loadFrames();
 		const now = Date.now();
 		if(now - tf_throttle_stamp >= parseInt(throttle.value)){
 			const frame = tf.absoluteTransforms[raw_target];

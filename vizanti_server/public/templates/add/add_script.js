@@ -1,6 +1,6 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
+let endpointService = endpointServiceModule.endpointService;
 
 const icon = document.getElementById('icon_add_element');
 const typeButton = document.getElementById('add_set_type');
@@ -52,21 +52,21 @@ icon.addEventListener("click", (event) => {
 
 // rebuild topic list
 async function update_topics(){
-	let result = await rosbridge.get_all_topics();
+	let discoveredTopics = await endpointService.discoverEndpoints();
 
 	topicDiv.innerHTML = "";
-	for (let i = 0; i < result.types.length; i++) {
-		let type = result.types[i];
+	for (const discoveredTopic of discoveredTopics) {
+		let type = discoveredTopic.messageType;
 		if(type in types){
 			types[type].forEach(element => {
 				let newnode = element.cloneNode(true);
 				let title = newnode.querySelector('.card_title');
 				let desc = newnode.querySelector('.card_desc');
 				
-				newnode.setAttribute('onclick', newnode.getAttribute("onclick").replace(",\'\')",",\'"+result.topics[i]+"\')"));
+				newnode.setAttribute('onclick', newnode.getAttribute("onclick").replace(",\'\')",",\'"+discoveredTopic.id+"\')"));
 
 				desc.innerText = title.innerText + " ["+type + "]";
-				title.innerText = result.topics[i];
+				title.innerText = discoveredTopic.label;
 				topicDiv.appendChild(newnode);
 			});
 		}

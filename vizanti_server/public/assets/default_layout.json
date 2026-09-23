@@ -5,10 +5,6 @@
       "id": "settings_default"
     },
     {
-      "type": "rosbridge",
-      "id": "rosbridge_default"
-    },
-    {
       "type": "grid",
       "id": "grid_default"
     },

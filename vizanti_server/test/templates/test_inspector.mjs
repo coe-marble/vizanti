@@ -1,36 +1,90 @@
 import assert from 'assert';
 import { runTemplateContract } from './template_test_helpers.mjs';
-import { loadFunctions, environment, element, spy, plain, subscriptionCases } from './plugin_harness.mjs';
+import { element, loadFunctions, plain, spy } from './plugin_harness.mjs';
 
 describe('inspector plugin', function () {
-    it('preserves required template assets and placeholders', function () {
-        runTemplateContract('inspector');
-    });
+	it('preserves required template assets and placeholders', function () {
+		runTemplateContract('inspector');
+	});
 
-    const setup = () => ({ topic_type: 'custom/msg/Data', prevtopic: '', live_data_div: element(), info_div: element() });
-    subscriptionCases('inspector', 'topicobj', 'custom/msg/Data', setup);
-    function arrange() {
-        const ctx = loadFunctions('inspector', ['connect'], environment({ ...setup(), topicobj: undefined,
-            document: { createElement: () => element() },
-            rosbridge: { ros: {}, get_topic_publishers_and_subscribers: async () => ({ publishers: ['node'] }) },
-        })); ctx.connect(); return ctx;
-    }
-    it('resets old display contents when the topic changes', function () {
-        const ctx = arrange();
-        assert.strictEqual(ctx.live_data_div.innerHTML, '<p>Waiting for data...</p>');
-        assert.strictEqual(ctx.info_div.innerHTML, '<p>Waiting for data...</p>');
-        assert.strictEqual(ctx.prevtopic, '/test');
-    });
-    it('limits long strings and arrays while reporting omitted items', async function () {
-        const ctx = arrange();
-        await ctx.topics[0].emit({ long: 'x'.repeat(201), values: Array.from({ length: 55 }, (_, i) => i) });
-        const rows = ctx.live_data_div.children[0].children.map(x => x.textContent);
-        assert.strictEqual(rows[0], `long: ${'x'.repeat(200)}... [truncated]`);
-        assert.strictEqual(rows[1], 'values: Array(55)');
-        assert.strictEqual(rows.length, 53);
-        assert.strictEqual(rows[52], '... 5 more items');
-        assert.strictEqual(ctx.info_div.children.length, 1);
-        assert.strictEqual(ctx.status.setOK.calls.length, 1);
-    });
+	function configuration() {
+		return {
+			adapterId: 'ros2',
+			adapterValues: {},
+			endpointType: 'topic',
+			endpoint: { topic: '/test', nativeMessageType: 'custom_msgs/msg/Data' },
+		};
+	}
 
+	function loadConnect(overrides = {}) {
+		return loadFunctions('inspector', [
+			'activeEndpointConfiguration', 'deliveryOptions', 'disconnect',
+			'createNestedDisplay', 'connect',
+		], {
+			endpointConfigurationEditor: { activeConfiguration: null },
+			endpointService: { subscribeRaw: spy(), getTopicInfo: spy(async () => ({ publishers: ['node'] })) },
+			subscription: undefined, previousTopic: '', throttle: element('100'),
+			status: { setOK: spy(), setWarn: spy(), setError: spy() }, saveSettings: spy(),
+			liveDataDiv: element(), infoDiv: element(),
+			document: { createElement: () => element() },
+			...overrides,
+		});
+	}
+
+	it('requires a configured raw topic before subscribing', function () {
+		const ctx = loadConnect();
+		ctx.connect();
+		assert.equal(ctx.endpointService.subscribeRaw.calls.length, 0);
+		assert.deepEqual(ctx.status.setError.calls, [['Select a configured topic.']]);
+	});
+
+	it('subscribes through the adapter and clears data when the topic changes', function () {
+		const subscription = { unsubscribe: spy() };
+		const ctx = loadConnect({
+			endpointConfigurationEditor: { activeConfiguration: configuration() },
+			endpointService: { subscribeRaw: spy(() => subscription), getTopicInfo: spy(async () => ({ publishers: ['node'] })) },
+		});
+		ctx.connect();
+		const [receivedConfiguration, onMessage, delivery] = ctx.endpointService.subscribeRaw.calls[0];
+		assert.deepEqual(plain(receivedConfiguration), configuration());
+		assert.equal(typeof onMessage, 'function');
+		assert.deepEqual(plain(delivery), { throttleRate: 100, queueLength: 1 });
+		assert.equal(ctx.liveDataDiv.innerHTML, '<p>Waiting for data...</p>');
+		assert.equal(ctx.infoDiv.innerHTML, '<p>Waiting for data...</p>');
+		assert.equal(ctx.previousTopic, '/test');
+		assert.deepEqual(ctx.status.setWarn.calls, [['No data received.']]);
+	});
+
+	it('renders raw payloads with bounded strings and arrays', async function () {
+		const subscription = { unsubscribe: spy() };
+		const endpointService = {
+			subscribeRaw: spy(() => subscription),
+			getTopicInfo: spy(async () => ({ publishers: ['node'] })),
+		};
+		const ctx = loadConnect({
+			endpointConfigurationEditor: { activeConfiguration: configuration() }, endpointService,
+		});
+		ctx.connect();
+		const [, onMessage] = endpointService.subscribeRaw.calls[0];
+		await onMessage({ long: 'x'.repeat(201), values: Array.from({ length: 55 }, (_, index) => index) });
+		const rows = ctx.liveDataDiv.children[0].children.map(row => row.textContent);
+		assert.equal(rows[0], `long: ${'x'.repeat(200)}... [truncated]`);
+		assert.equal(rows[1], 'values: Array(55)');
+		assert.equal(rows.length, 53);
+		assert.equal(rows[52], '... 5 more items');
+		assert.equal(ctx.infoDiv.children.length, 1);
+		assert.equal(ctx.status.setOK.calls.length, 1);
+	});
+
+	it('unsubscribes the previous raw subscription before reconnecting', function () {
+		const subscription = { unsubscribe: spy() };
+		const ctx = loadConnect({
+			endpointConfigurationEditor: { activeConfiguration: configuration() },
+			endpointService: { subscribeRaw: spy(() => subscription), getTopicInfo: spy(async () => ({})) },
+		});
+		ctx.connect();
+		ctx.connect();
+		assert.deepEqual(subscription.unsubscribe.calls, [[]]);
+		assert.equal(ctx.endpointService.subscribeRaw.calls.length, 2);
+	});
 });

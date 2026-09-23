@@ -1,7 +1,9 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let adapterConfigurationEditorModule = await import(`${base_url}/js/modules/adapter_configuration_editor.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
+let endpointService = endpointServiceModule.endpointService;
+let createAdapterConfigurationEditor = adapterConfigurationEditorModule.createAdapterConfigurationEditor;
 let settings = persistentModule.settings;
 
 const savePathBox = document.getElementById("{uniqueID}_savepath");
@@ -9,17 +11,20 @@ const selectAllButton = document.getElementById('{uniqueID}_selectall');
 const selectNoneButton = document.getElementById('{uniqueID}_selectnone');
 const startButton = document.getElementById('{uniqueID}_toggle');
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
+const adapterConfigurationContainer = document.getElementById("{uniqueID}_adapter_configuration");
 
-let path = "~/recording.bag";
+let path = "~/recording";
 let topic_list = new Set();
 let active = false;
+let adapterConfiguration = null;
+let adapterConfigurationEditor;
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	path = loaded_data.path;
-	topic_list = new Set(loaded_data.topic_list);
+	path = typeof loaded_data.path === "string" ? loaded_data.path : path;
+	topic_list = new Set(Array.isArray(loaded_data.topic_list) ? loaded_data.topic_list : []);
+	adapterConfiguration = loaded_data.adapter_configuration || null;
 }else{
 	saveSettings();
 }
@@ -29,61 +34,29 @@ savePathBox.value = path;
 function saveSettings(){
 	settings["{uniqueID}"] = {
 		path: path,
-		topic_list: Array.from(topic_list)
+		topic_list: Array.from(topic_list),
+		adapter_configuration: adapterConfiguration,
 	}
 	settings.save();
 }
 
-async function getRecordingStatus(topics, start, path) {
-	const recordRosbagService = new ROSLIB.Service({
-		ros: rosbridge.ros,
-		name: "/vizanti/bag/status",
-		serviceType: "std_srvs/srv/Trigger",
-	});
-
-	return new Promise((resolve, reject) => {
-		const request = new ROSLIB.ServiceRequest({ topics, start, path });
-		recordRosbagService.callService(request, (result) => {
-			setState(result.success);
-			resolve(result.success);		
-		}, (error) => {
-			console.log(error);
-			resolve(false);
-		});
-	});
+async function getRecordingStatus() {
+	try {
+		const recording = await endpointService.recordingStatus(adapterConfiguration);
+		setState(recording.active);
+		return recording.active;
+	} catch (error) {
+		console.log(error);
+		setState(false);
+		return false;
+	}
 }
 
-function getCurrentDateTimeString() {
-	const date = new Date();
-	const year = date.getFullYear();
-	const month = (date.getMonth() + 1).toString().padStart(2, '0');
-	const day = date.getDate().toString().padStart(2, '0');
-	const hours = date.getHours().toString().padStart(2, '0');
-	const minutes = date.getMinutes().toString().padStart(2, '0');
-
-	return `${year}-${month}-${day}-${hours}-${minutes}`;
-}
-
-async function recordRosbag(topics, start, path) {
-	const recordRosbagService = new ROSLIB.Service({
-		ros: rosbridge.ros,
-		name: "/vizanti/bag/setup",
-		serviceType: "vizanti_msgs/srv/RecordRosbag",
-	});
-
-	const timestamp = getCurrentDateTimeString();
-    const pathArray = path.split("/");
-    const fileName = pathArray.pop();
-    const timepath = `${pathArray.join("/")}/${timestamp}-${fileName}`;
-
-	return new Promise((resolve, reject) => {
-		const request = new ROSLIB.ServiceRequest({ topics, start, path: timepath });
-		recordRosbagService.callService(request, (result) => {
-			resolve(result);
-		}, (error) => {
-			reject(error);
-			alert(error);
-		});
+async function setRecording(topics, start, path) {
+	return endpointService.setRecording(adapterConfiguration, {
+		topics,
+		start,
+		path: start ? path : "",
 	});
 }
 
@@ -104,8 +77,8 @@ function setState(state){
 }
 
 async function startRecording() {
-	if(await confirm("Are you sure you want to start recording a bag?")){
-		const result = await recordRosbag(Array.from(topic_list), true, path);
+	if(await confirm("Are you sure you want to start recording?")){
+		const result = await setRecording(Array.from(topic_list), true, path);
 		setState(result.success);
 		alert(result.message)
 	}
@@ -113,7 +86,7 @@ async function startRecording() {
 
 async function stopRecording() {
 	if(await confirm("Are you sure you want to stop recording?")){
-		const result = await recordRosbag([], false, '');
+		const result = await setRecording([], false, '');
 		setState(!result.success);
 		alert(result.message)
 	}
@@ -129,13 +102,8 @@ startButton.addEventListener('click', async () => {
 });
 
 selectAllButton.addEventListener('click', async () => {
-	let result = await rosbridge.get_all_topics();
-
-	result.topics.forEach((topic) => {
-		if(!topic.includes("/vizanti/tf_consolidated")){
-			topic_list.add(topic);
-		}
-	});
+	const topics = await endpointService.discoverEndpoints({ adapterConfiguration });
+	topics.forEach((topic) => topic_list.add(topic.id));
 	
 	updateTopics();
 	saveSettings();
@@ -158,20 +126,18 @@ async function updateTopics(){
 	//recheck in case another client started a recording
 	await getRecordingStatus();
 
-	let result = await rosbridge.get_all_topics();
+	const topics = await endpointService.discoverEndpoints({ adapterConfiguration });
 
 	topicsDiv.innerHTML = '';
 
 	// Group topics by type
 	let topicsByType = new Map();
-	result.topics.forEach((topic, index) => {
-		if(!topic.includes("/vizanti/tf_consolidated")){
-			const type = result.types[index];
-			if (topicsByType.has(type)) {
-				topicsByType.get(type).push(topic);
-			} else {
-				topicsByType.set(type, [topic]);
-			}
+	topics.forEach((topic) => {
+		const type = topic.messageType || "Unknown";
+		if (topicsByType.has(type)) {
+			topicsByType.get(type).push(topic.id);
+		} else {
+			topicsByType.set(type, [topic.id]);
 		}
 	});
 
@@ -242,6 +208,17 @@ async function updateTopics(){
 }
 
 icon.addEventListener("click", updateTopics);
-updateTopics();
+
+adapterConfigurationEditor = createAdapterConfigurationEditor({
+	container: adapterConfigurationContainer,
+	endpointService,
+	configuration: adapterConfiguration,
+	onChange(configuration) {
+		adapterConfiguration = configuration;
+		saveSettings();
+		updateTopics();
+	},
+});
+adapterConfigurationEditor.refresh();
 
 console.log("Rosbag Widget Loaded {uniqueID}")

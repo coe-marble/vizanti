@@ -8,7 +8,7 @@ describe('pointcloud plugin', function () {
     });
 
     subscriptionCases('pointcloud', 'range_topic', 'sensor_msgs/msg/PointCloud2');
-    for (const [type, setter, value] of [[1, 'setInt8', -12], [2, 'setUint8', 250], [3, 'setInt16', -1234], [5, 'setInt32', -123456], [7, 'setFloat32', 1.25], [8, 'setFloat64', -2.5]]) {
+    for (const [type, setter, value] of [[1, 'setInt8', -12], [2, 'setUint8', 250], [3, 'setInt16', -1234], [4, 'setUint16', 54321], [5, 'setInt32', -123456], [6, 'setUint32', 4000000000], [7, 'setFloat32', 1.25], [8, 'setFloat64', -2.5]]) {
         for (const littleEndian of [true, false]) {
             it(`decodes datatype ${type} with littleEndian=${littleEndian} at a nonzero offset`, function () {
                 const view = new DataView(new ArrayBuffer(16));

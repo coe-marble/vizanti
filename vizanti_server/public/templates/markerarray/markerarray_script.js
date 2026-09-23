@@ -1,29 +1,32 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
-let topic = getTopic("{uniqueID}");
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let listener = undefined;
-let marker_topic = undefined;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.MARKER_ARRAY;
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+let subscription = undefined;
 
 let markers = {};
 let z_sorted_keys = [];
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
 
 const canvas = document.getElementById('{uniqueID}_canvas');
@@ -57,13 +60,13 @@ let disabled_namespaces = new Set();
 //Settings
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 	throttle.value = loaded_data.throttle ?? 100;
 
 	opacitySlider.value = loaded_data.opacity ?? 1.0;
-	setOpacityText(loaded_data.opacity);
+	setOpacityText(opacitySlider.value);
 
-	disabled_namespaces = new Set(loaded_data.disabled_namespaces) ?? new Set();
+	disabled_namespaces = new Set(loaded_data.disabled_namespaces);
 	updateNamespaceGUI();
 }else{
 	saveSettings();
@@ -72,7 +75,7 @@ if(settings.hasOwnProperty("{uniqueID}")){
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		throttle: throttle.value,
 		opacity: opacitySlider.value,
 		disabled_namespaces: [...disabled_namespaces]
@@ -80,34 +83,10 @@ function saveSettings(){
 	settings.save();
 }
 
-
 //Rendering
 
-/* 
-Header header                        # header for time/frame information
-string ns                            # Namespace to place this object in... used in conjunction with id to create a unique name for the object
-int32 id                           # object ID useful in conjunction with the namespace for manipulating and deleting the object later
-int32 type                         # Type of object
-int32 action                         # 0 add/modify an object, 1 (deprecated), 2 deletes an object, 3 deletes all objects
-geometry_msgs/Pose pose                 # Pose of the object
-geometry_msgs/Vector3 scale             # Scale of the object 1,1,1 means default (usually 1 meter square)
-std_msgs/ColorRGBA color             # Color [0.0-1.0]
-duration lifetime                    # How long the object should last before being automatically deleted.  0 means forever
-bool frame_locked                    # If this marker should be frame-locked, i.e. retransformed into its frame every timestep
-
-#Only used if the type specified has some use for them (eg. POINTS, LINE_STRIP, ...)
-geometry_msgs/Point[] points
-#Only used if the type specified has some use for them (eg. POINTS, LINE_STRIP, ...)
-#number of colors must either be 0 or equal to the number of points
-#NOTE: alpha is not yet used
-std_msgs/ColorRGBA[] colors
-
-# NOTE: only used for text markers
-string text
-
-# NOTE: only used for MESH_RESOURCE markers
-string mesh_resource
-bool mesh_use_embedded_materials */
+// Marker entries use the adapter-neutral MarkerArray schema from gui_messages.
+// The renderer augments each entry with derived transform and triangle data.
 
 function rgbaToFillColor(rosColorRGBA) {
 
@@ -386,14 +365,14 @@ async function drawMarkers(){
 
 	for (const key of z_sorted_keys) {
 		const marker = markers[key];
-		const ns = marker.ns || '';
+		const ns = marker.namespace || '';
 
 		if (disabled_namespaces.has(ns))
 			continue;
 		
 		ctx.fillStyle = rgbaToFillColor(marker.color);
 
-		const frame = tf.getAbsoluteTransform(marker.header);
+		const frame = tf.getAbsoluteTransform({ frameId: marker.frameId, stamp: marker.frameStamp });
 
 		if(!frame)
 			continue;
@@ -430,39 +409,29 @@ async function drawMarkers(){
 	}
 }
 
-//Topic
 function connect(){
+	if(subscription !== undefined){
+		subscription.unsubscribe();
+		subscription = undefined;
+	}
 
-	if(topic == ""){
-		status.setError("Empty topic.");
+	const configuration = getEndpointConfiguration();
+	if (!configuration) {
 		return;
 	}
 
-	if(marker_topic !== undefined){
-		marker_topic.unsubscribe(listener);
-	}
-
-	marker_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'visualization_msgs/msg/MarkerArray',
-		compression: rosbridge.compression,
-		throttle_rate: parseInt(throttle.value),
-		queue_length: 1
-	});
-
 	status.setWarn("No data received.");
 	
-	listener = marker_topic.subscribe((msg) => {
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
 
 		let error = false;
-		msg.markers.forEach(m => {
+		message.markers.forEach(m => {
 			if(m.action == 3){
 				markers = {};
 				z_sorted_keys = [];
 				return;
 			}
-			const id = m.ns + m.id;
+			const id = m.namespace + m.id;
 			if(m.action == 2){
 				if(markers.hasOwnProperty(id)){
 					delete markers[id];
@@ -470,21 +439,21 @@ function connect(){
 				return;
 			}
 
-			const q = m.pose.orientation;
+			const q = m.orientation;
 			if(q.x == 0 && q.y == 0 && q.z == 0 && q.w == 0){
-				m.pose.orientation = new Quaternion();
+				m.orientation = new Quaternion();
 			}
 
-			if(m.header.frame_id == ""){
+			if(m.frameId == ""){
 				status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-				m.header.frame_id = tf.fixed_frame;
+				m.frameId = tf.fixed_frame;
 				error = true;
 			}
 
 			m.transformed = tf.transformPoseStamped(
-				m.header,
-				m.pose.position, 
-				m.pose.orientation
+				{ frameId: m.frameId, stamp: m.frameStamp },
+				m.position,
+				m.orientation
 			);
 
 			//preprocess triangle_lists for correct 3D rotation and colour
@@ -580,14 +549,31 @@ function connect(){
 			status.setOK();
 		}
 		drawMarkers();
+	}, {
+		throttleRate: deliveryThrottleRate(),
+		queueLength: 1,
 	});
 
 	saveSettings();
 	updateNamespaceGUI();
 }
 
+function getEndpointConfiguration() {
+	const configuration = endpointConfigurationEditor.activeConfiguration;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured endpoint.");
+		return null;
+	}
+	return configuration;
+}
+
+function deliveryThrottleRate() {
+	const value = Number.parseInt(throttle.value, 10);
+	return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
 function updateNamespaceGUI() {
-	const seen = new Set(Object.values(markers).map(m => m.ns || ''));
+	const seen = new Set(Object.values(markers).map(m => m.namespace || ''));
 
 	namespaceDiv.innerHTML = '';
 	for (const ns of [...seen].sort()) {
@@ -616,46 +602,26 @@ function updateNamespaceGUI() {
 	}
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("visualization_msgs/msg/MarkerArray");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	markers = {};
-	z_sorted_keys = [];
-	connect();
-});
-
-selectionbox.addEventListener("click", (event) => {
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		markers = {};
+		z_sorted_keys = [];
+		saveSettings();
+		connect();
+	},
 });
 
 icon.addEventListener("click", (event) => {
-	loadTopics();
+	endpointConfigurationEditor.refresh();
 	updateNamespaceGUI();
 });
-
-loadTopics();
 
 function resizeScreen(){
 	canvas.height = window.innerHeight;
@@ -669,5 +635,6 @@ window.addEventListener('resize', resizeScreen);
 window.addEventListener('orientationchange', resizeScreen);
 
 resizeScreen();
+endpointConfigurationEditor.refresh().then(connect);
 
 console.log("MarkerArray Widget Loaded {uniqueID}")

@@ -1,6 +1,7 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let navsatModule = await import(`${base_url}/js/modules/navsat.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
@@ -8,9 +9,9 @@ let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_select
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let applyRotation = endpointService.applyRotation.bind(endpointService);
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let navsat = navsatModule.navsat;
 let Navsat = navsatModule.Navsat;
@@ -22,12 +23,19 @@ let status = new Status(
 );
 
 let copyright = "© OpenStreetMap";
-let topic = getTopic("{uniqueID}");
 let server_url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-let listener = undefined;
 let zoomLevel = 12;
 
-let map_topic = undefined;
+let endpointConfiguration = null;
+let gotoNavSatFixEndpointConfiguration = null;
+let gotoPoseEndpointConfiguration = null;
+let gotoMessageMode = "navsatfix";
+let useManualFix = false;
+let endpointConfigurationEditor;
+let gotoNavSatFixEndpointConfigurationEditor;
+let gotoPoseEndpointConfigurationEditor;
+const navSatFixMessageType = guiMessages.GUI_MESSAGE_TYPE.NAV_SAT_FIX;
+let mapSubscription = undefined;
 let map_fix = undefined;
 let fix_data = undefined;
 let enu_origin = undefined;
@@ -35,9 +43,6 @@ let enuToScreenMat = undefined;
 let last_fix_key = undefined;
 let update_throttle = undefined;
 
-let default_fixed_point = "map,0.0,0.0,0.0";
-
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
 
 const tileServerString = document.getElementById('{uniqueID}_tileserver');
@@ -53,33 +58,61 @@ const text_cov = document.getElementById("{uniqueID}_covariance");
 const text_frame = document.getElementById("{uniqueID}_frame");
 const fixedPointInput = document.getElementById("{uniqueID}_fixed_point");
 const setFixedPointButton = document.getElementById("{uniqueID}_set_fixed_point");
+const useManualFixBox = document.getElementById("{uniqueID}_configure_goto");
+const manualFixSection = document.getElementById("{uniqueID}_manual_fix_section");
+const navSatFixInputSection = document.getElementById("{uniqueID}_navsatfix_input_section");
+const publishPoseStampedBox = document.getElementById("{uniqueID}_publish_pose_stamped");
+const gotoEndpointHeading = document.getElementById("{uniqueID}_goto_endpoint_heading");
+const gotoNavSatFixEndpointConfigurationContainer = document.getElementById("{uniqueID}_goto_navsatfix_endpoint_configuration");
+const gotoPoseEndpointConfigurationContainer = document.getElementById("{uniqueID}_goto_pose_endpoint_configuration");
 const contextMenu = document.getElementById("{uniqueID}_context_menu");
 const mapPointer = document.getElementById("{uniqueID}_map_pointer");
 const gotoPointAction = document.getElementById("{uniqueID}_goto_point_action");
 
-// Selecting the Go To action should keep the vehicle selected until its
-// namespace has been resolved for publication.
 contextMenu.addEventListener("mousedown", (event) => event.stopPropagation());
 contextMenu.addEventListener("touchstart", (event) => event.stopPropagation());
 
 function updateGotoPointAvailability() {
-	const hasSelectedVehicle = vehicleSelectionModule.getSelectedVehicle() !== null;
-	gotoPointAction.classList.toggle("menu-item-disabled", !hasSelectedVehicle);
-	gotoPointAction.setAttribute("aria-disabled", String(!hasSelectedVehicle));
-	gotoPointAction.title = hasSelectedVehicle
-		? "Send Go To Point to the selected vehicle"
-		: "Select a vehicle before sending Go To Point";
+	const editor = gotoMessageMode === "pose_stamped"
+		? gotoPoseEndpointConfigurationEditor : gotoNavSatFixEndpointConfigurationEditor;
+	const configured = editor && editor.activeConfiguration;
+	const selectedVehicle = vehicleSelectionModule.getSelectedVehicle();
+	const available = configured && selectedVehicle;
+	gotoPointAction.classList.toggle("menu-item-disabled", !available);
+	gotoPointAction.setAttribute("aria-disabled", String(!available));
+	if (!selectedVehicle) {
+		gotoPointAction.title = "Select a Robot Model before sending Go To Point";
+	} else if (!configured) {
+		gotoPointAction.title = "Configure a Go To Point endpoint first";
+	} else {
+		gotoPointAction.title = "Send Go To Point to the configured endpoint";
+	}
 }
 
 window.addEventListener("vehicle_selection_changed", updateGotoPointAvailability);
-updateGotoPointAvailability();
+
+function updateGotoEndpointConfigurationVisibility() {
+	const poseStamped = gotoMessageMode === "pose_stamped";
+	publishPoseStampedBox.checked = poseStamped;
+	gotoEndpointHeading.innerText = poseStamped
+		? "PoseStamped Output Configuration" : "NavSatFix Output Configuration";
+	gotoNavSatFixEndpointConfigurationContainer.style.display = poseStamped ? "none" : "";
+	gotoPoseEndpointConfigurationContainer.style.display = poseStamped ? "" : "none";
+	updateGotoPointAvailability();
+}
+
+function updateFixSourceVisibility() {
+	useManualFixBox.checked = useManualFix;
+	manualFixSection.style.display = useManualFix ? "" : "none";
+	navSatFixInputSection.style.display = useManualFix ? "none" : "";
+}
 
 const placeholder = new Image();
 placeholder.src = "assets/tile_loading.png";
 
 
 function fixedPointHasValidData(input){
-	return input.trim() != "" && input.trim() != default_fixed_point;
+	return input.trim() !== "";
 }
 
 
@@ -149,7 +182,11 @@ ctx.clip = function(){};
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
+	gotoNavSatFixEndpointConfiguration = loaded_data.goto_navsatfix_endpoint_configuration || null;
+	gotoPoseEndpointConfiguration = loaded_data.goto_pose_endpoint_configuration || null;
+	gotoMessageMode = loaded_data.goto_message_mode === "pose_stamped" ? "pose_stamped" : "navsatfix";
+	useManualFix = loaded_data.use_manual_fix === true;
 	server_url = loaded_data.server_url;
 
 	if(server_url.includes("tile.openstreetmap.org"))
@@ -170,7 +207,11 @@ if(settings.hasOwnProperty("{uniqueID}")){
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
+		goto_navsatfix_endpoint_configuration: gotoNavSatFixEndpointConfiguration,
+		goto_pose_endpoint_configuration: gotoPoseEndpointConfiguration,
+		goto_message_mode: gotoMessageMode,
+		use_manual_fix: useManualFix,
 		fixed_point: fixedPointInput.value,
 		server_url: server_url,
 		opacity: opacitySlider.value,
@@ -194,6 +235,41 @@ function findParentTile(x, y, z, maxLevelsUp = 4) {
 		}
 	}
 	return null;
+}
+
+// A parent tile is an effective temporary fallback while zooming in, but it
+// cannot help while zooming out: the tiles already on screen are children of
+// the newly requested tile. Draw available children in that case so an LOD
+// transition never leaves the map blank while the lower-resolution tile is
+// read from the cache or downloaded.
+function findChildTiles(x, y, z, maxLevelsDown = 4) {
+	for (let dz = 1; dz <= maxLevelsDown && (z + dz) <= 19; dz++) {
+		const scale = 1 << dz;
+		const childZoom = z + dz;
+		const children = [];
+
+		for (let childY = 0; childY < scale; childY++) {
+			for (let childX = 0; childX < scale; childX++) {
+				const tileX = x * scale + childX;
+				const tileY = y * scale + childY;
+				const maxTile = (1 << childZoom) - 1;
+				const wrappedX = ((tileX % (maxTile + 1)) + (maxTile + 1)) % (maxTile + 1);
+				const tileURL = server_url
+					.replace("{z}", childZoom)
+					.replace("{x}", wrappedX)
+					.replace("{y}", tileY);
+				const image = navsat.live_cache[tileURL];
+				if (image && image.complete) {
+					children.push({ image, x: tileX, y: tileY, z: childZoom });
+				}
+			}
+		}
+
+		if (children.length > 0) {
+			return children;
+		}
+	}
+	return [];
 }
 
 // Per-frame cache of tile corner ENU positions (corners are shared between
@@ -276,6 +352,39 @@ function drawImageQuad(img, sx, sy, sw, sh, pNW, pNE, pSW, pSE) {
 	drawImageTriangle(img, sx + sw, sy, sx + sw, sy + sh, sx, sy + sh, pNE, pSE, pSW);
 }
 
+function tileScreenQuad(x, y, z, inflate = true) {
+	const nw = tileCornerEnu(x,     y,     z);
+	const ne = tileCornerEnu(x + 1, y,     z);
+	const sw = tileCornerEnu(x,     y + 1, z);
+	const se = tileCornerEnu(x + 1, y + 1, z);
+	const m = enuToScreenMat;
+	const toScreen = (point) => ({
+		x: m.a * point.x + m.b * point.y + m.e,
+		y: m.c * point.x + m.d * point.y + m.f,
+	});
+	const corners = [toScreen(nw), toScreen(ne), toScreen(sw), toScreen(se)];
+
+	if (!inflate) {
+		return corners;
+	}
+
+	const centerX = corners.reduce((sum, point) => sum + point.x, 0) / 4;
+	const centerY = corners.reduce((sum, point) => sum + point.y, 0) / 4;
+	return corners.map((point) => {
+		const dx = point.x - centerX;
+		const dy = point.y - centerY;
+		const length = Math.hypot(dx, dy) || 1;
+		return { x: point.x + (dx / length) * 1.4, y: point.y + (dy / length) * 1.4 };
+	});
+}
+
+function drawTileImage(image, x, y, z, sx = 0, sy = 0, sw = undefined, sh = undefined) {
+	const [pNW, pNE, pSW, pSE] = tileScreenQuad(x, y, z);
+	const width = sw ?? (image.naturalWidth || navsat.tile_size);
+	const height = sh ?? (image.naturalHeight || navsat.tile_size);
+	drawImageQuad(image, sx, sy, width, height, pNW, pNE, pSW, pSE);
+}
+
 function drawTile(i, j, tempZoomLevel, maxtile) {
 	const tx = fix_data.tilePos.x + i;
 	const ty = fix_data.tilePos.y + j;
@@ -286,14 +395,6 @@ function drawTile(i, j, tempZoomLevel, maxtile) {
 
 	// proper positive modulo for horizontal antimeridian wrap (any negative tx)
 	const wrappedX = ((tx % (maxtile + 1)) + (maxtile + 1)) % (maxtile + 1);
-
-	// All four ENU corners of this tile. tileToCoord is evaluated with the
-	// *unwrapped* tx so tiles across the antimeridian still land at a
-	// continuous easting (sin/cos of longitude are periodic).
-	const nw = tileCornerEnu(tx,     ty,     tempZoomLevel);
-	const ne = tileCornerEnu(tx + 1, ty,     tempZoomLevel);
-	const sw = tileCornerEnu(tx,     ty + 1, tempZoomLevel);
-	const se = tileCornerEnu(tx + 1, ty + 1, tempZoomLevel);
 
 	const tileURL = server_url.replace("{z}", tempZoomLevel).replace("{x}", wrappedX).replace("{y}", ty);
 	let tileImage = navsat.live_cache[tileURL];
@@ -306,43 +407,22 @@ function drawTile(i, j, tempZoomLevel, maxtile) {
 			tileImage = placeholder;
 	}
 
-	function inflateCorners(pNW, pNE, pSW, pSE, grow){
-		const cx = (pNW.x+pNE.x+pSW.x+pSE.x)/4;
-		const cy = (pNW.y+pNE.y+pSW.y+pSE.y)/4;
-		const push = (p) => {
-			const dx=p.x-cx, dy=p.y-cy, len=Math.hypot(dx,dy)||1;
-			return { x:p.x+(dx/len)*grow, y:p.y+(dy/len)*grow };
-		};
-		return [push(pNW), push(pNE), push(pSW), push(pSE)];
-	}
-
-	function enuToScreen(p){
-		const m = enuToScreenMat;
-		return {
-			x: m.a * p.x + m.b * p.y + m.e,
-			y: m.c * p.x + m.d * p.y + m.f
-		};
-	}
-
-	const pNW = enuToScreen(nw);
-	const pNE = enuToScreen(ne);
-	const pSW = enuToScreen(sw);
-	const pSE = enuToScreen(se);
-
-	const [iNW, iNE, iSW, iSE] = inflateCorners(pNW, pNE, pSW, pSE, 1.4);
-
 	// Map the image onto the exact quadrilateral. The SE corner is no longer
 	// extrapolated as a parallelogram (NE + SW - NW) — the tile footprint in a
 	// tangent plane is a trapezoid, and that extrapolation is what produced
 	// the triangular gaps between the bottom corners of adjacent tiles when
 	// zoomed far out.
 	if (parentCrop){
-		drawImageQuad(parentCrop.image, parentCrop.srcX, parentCrop.srcY, parentCrop.srcSize, parentCrop.srcSize, iNW, iNE, iSW, iSE);
+		drawTileImage(parentCrop.image, tx, ty, tempZoomLevel, parentCrop.srcX, parentCrop.srcY, parentCrop.srcSize, parentCrop.srcSize);
 	}
 	else {
-		const sw_px = tileImage.naturalWidth || navsat.tile_size;
-		const sh_px = tileImage.naturalHeight || navsat.tile_size;
-		drawImageQuad(tileImage, 0, 0, sw_px, sh_px, iNW, iNE, iSW, iSE);
+		drawTileImage(tileImage, tx, ty, tempZoomLevel);
+
+		if (tileImage === placeholder) {
+			for (const child of findChildTiles(tx, ty, tempZoomLevel)) {
+				drawTileImage(child.image, child.x, child.y, child.z);
+			}
+		}
 	}
 }
 
@@ -376,7 +456,6 @@ async function drawTiles(){
 	let	tempZoomLevel = Math.round(Math.log2(view.scale)+17);
 	tempZoomLevel = clamp(tempZoomLevel, 7, 19);
 	if(tempZoomLevel != zoomLevel){
-		navsat.clear_queue();
 		zoomLevel = tempZoomLevel;
 		updateFixData();
 	}
@@ -425,7 +504,7 @@ async function drawTiles(){
 		if(ignoreRotationCheckbox.checked){
 			local = d;
 		}else{
-			local = applyRotation(d, frame.rotation, true);
+			local = tf.applyRotation(d, frame.rotation, true);
 		}
 
 		return Navsat.enuGroundToLla(local.x, local.y, enu_origin);
@@ -494,23 +573,20 @@ let connect_retry = 0;
 
 //Topic
 function connect(){
-
-	if(topic == "" && !fixedPointHasValidData(fixedPointInput.value)){
-		status.setError("Empty topic.");
-	}
-	if (topic == "")
-		return
-
-
-	if(map_topic !== undefined){
-		map_topic.unsubscribe(listener);
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration) {
+		if (!fixedPointHasValidData(fixedPointInput.value)) {
+			status.setError("No NavSatFix endpoint configured.");
+		}
+		return;
 	}
 
-	map_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'sensor_msgs/msg/NavSatFix'
-	});
+	if (mapSubscription !== undefined) {
+		mapSubscription.unsubscribe();
+	}
+
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");
 	text_lat.innerText = "Latitude: ?";
@@ -522,38 +598,35 @@ function connect(){
 	last_fix_key = undefined;
 	update_throttle = new Date("2010-3-2");
 
-	listener = map_topic.subscribe((msg) => {
+	mapSubscription = endpointService.subscribe(configuration, navSatFixMessageType, (message) => {
 
 		if(new Date() - update_throttle < 4000 || opacitySlider.value == 0.0) //reduces jitter and CPU load in raw receiver mode
 			return;
 
 		update_throttle = new Date();
 
-		const cov_mat = msg.position_covariance;
+		const cov_mat = message.positionCovariance;
 		const covariance_meters = Math.hypot(Math.sqrt(cov_mat[0]), Math.sqrt(cov_mat[4]))
 
-		if(msg.latitude != null)
-			text_lat.innerText = "Latitude: " + msg.latitude.toFixed(8)+"°";
+		text_lat.innerText = "Latitude: " + message.latitude.toFixed(8)+"°";
 
-		if(msg.longitude != null)
-			text_lon.innerText = "Longitude: " + msg.longitude.toFixed(8)+"°";
+		text_lon.innerText = "Longitude: " + message.longitude.toFixed(8)+"°";
 
-		if(msg.altitude != null)
-			text_alt.innerText = "Altitude: " + msg.altitude.toFixed(2)+" m";
+		text_alt.innerText = "Altitude: " + message.altitude.toFixed(2)+" m";
 
-		text_cov.innerText = "Ground Covariance: " + covariance_meters.toFixed(2)+ " m " + COVARIANCE_TYPE[msg.position_covariance_type];
+		text_cov.innerText = "Ground Covariance: " + covariance_meters.toFixed(2)+ " m " + COVARIANCE_TYPE[message.positionCovarianceType];
 
-		if(msg.status.status == -1 || isNaN(msg.longitude) || isNaN(msg.latitude)){
+		if(message.status == -1 || Number.isNaN(message.longitude) || Number.isNaN(message.latitude)){
 			status.setWarn("No fix.");
 			return;
 		}
 
-		text_frame.innerText = "TF Frame: "+msg.header.frame_id;
+		text_frame.innerText = "TF Frame: "+message.frameId;
 
-		const frame = tf.getAbsoluteTransform(msg.header);
+		const frame = tf.getAbsoluteTransform({ frame_id: message.frameId, stamp: message.stamp });
 
 		if(!frame){
-			status.setError("Required transform frame \""+msg.header.frame_id+"\" not found.");
+			status.setError("Required transform frame \""+message.frameId+"\" not found.");
 			connect_retry = (connect_retry + 1) % 5;
 			if(connect_retry != 0){
 				console.log("Satelite tiles connect retry...")
@@ -564,21 +637,19 @@ function connect(){
 		}
 
 		connect_retry = 0;
-		msg.frame = frame;
-
-		map_fix = msg;
+		map_fix = { ...message, frame };
 
 		// Only rebuild the ENU origin and tile state if the actual fix changed.
 		// If it's the same position with a new header, no need to dump the corner cache and redo all the tile math.
-		const cov = msg.position_covariance;
-		const fix_key = `${msg.latitude},${msg.longitude},${msg.altitude},${cov[0]},${cov[4]},${cov[8]}`;
+		const cov = message.positionCovariance;
+		const fix_key = `${message.latitude},${message.longitude},${message.altitude},${cov[0]},${cov[4]},${cov[8]}`;
 		if(fix_key !== last_fix_key){
 			last_fix_key = fix_key;
 			updateFixData();
 		}
 
 		drawTiles();
-	});
+	}, { throttleRate: 100, queueLength: 1 });
 
 	saveSettings();
 }
@@ -587,7 +658,7 @@ function updateFixData(){
 	cornerCache.clear();
 
 	// The ENU tangent plane is anchored at the fix coordinate. If the backend
-	// projects GNSS with a fixed datum (recommended), make sure this topic
+	// projects GNSS with a fixed datum (recommended), make sure this endpoint
 	// publishes that datum so both ENU frames coincide exactly.
 	const alt = Number.isFinite(map_fix.altitude) ? map_fix.altitude : 0;
 	enu_origin = Navsat.buildEnuOrigin(map_fix.latitude, map_fix.longitude, alt);
@@ -611,75 +682,57 @@ function handleGotoPoint(pointX, pointY) {
 		z: -frame.translation.z
 	};
 
-	let local;
-	if(ignoreRotationCheckbox.checked){
-		local = d;
-	}else{
-		local = applyRotation(d, frame.rotation, true);
-	}
-
-	const lla = Navsat.enuGroundToLla(local.x, local.y, enu_origin);
-	publishGotoPoint(lla);
+	const frameLocal = tf.applyRotation(d, frame.rotation, true);
+	const displayedLocal = ignoreRotationCheckbox.checked ? d : frameLocal;
+	const lla = Navsat.enuGroundToLla(displayedLocal.x, displayedLocal.y, enu_origin);
+	publishGotoPoint(lla, enuPos);
 }
 
-function resolveGotoTopic() {
-	const selectedVehicle = vehicleSelectionModule.getSelectedVehicle();
-	if (!selectedVehicle) {
-		status.setError("Select a vehicle before sending Go To Point.");
-		return null;
-	}
-
-	const configuredTopic = selectedVehicle.gotoTopic?.trim();
-	if (!configuredTopic) {
-		status.setError("The selected vehicle has no Go To Point topic.");
-		return null;
-	}
-
-	if (configuredTopic.startsWith("/")) {
-		return configuredTopic;
-	}
-
-	const namespace = selectedVehicle.namespace.replace(/^\/+|\/+$/g, "");
-	return namespace ? `/${namespace}/${configuredTopic}` : `/${configuredTopic}`;
-}
-
-function publishGotoPoint(lla) {
-	const resolvedTopic = resolveGotoTopic();
-	if (!resolvedTopic) {
+function publishGotoPoint(lla, mapPoint) {
+	const poseStamped = gotoMessageMode === "pose_stamped";
+	const editor = poseStamped
+		? gotoPoseEndpointConfigurationEditor : gotoNavSatFixEndpointConfigurationEditor;
+	const configuration = editor ? editor.activeConfiguration : null;
+	if (!configuration) {
+		status.setError("No Go To Point endpoint configured.");
 		return;
 	}
 
-	const now = new Date();
-	const publisher = new ROSLIB.Topic({
-		ros: rosbridge.ros,
-		name: resolvedTopic,
-		messageType: "sensor_msgs/msg/NavSatFix",
-	});
-	publisher.publish(new ROSLIB.Message({
-		header: {
-			stamp: {
-				sec: Math.floor(now.getTime() / 1000),
-				nanosec: (now.getTime() % 1000) * 1e6,
+	const now = Date.now();
+	const stamp = { sec: Math.floor(now / 1000), nanosec: (now % 1000) * 1e6 };
+	if (poseStamped) {
+		endpointService.publish(configuration, guiMessages.createPoseStamped({
+			frameId: tf.fixed_frame,
+			stamp,
+			position: {
+				x: mapPoint.x,
+				y: mapPoint.y,
+				z: Number.isFinite(mapPoint.z) ? mapPoint.z : 0,
 			},
-			frame_id: map_fix.header.frame_id,
-		},
-		status: {
+			orientation: { x: 0, y: 0, z: 0, w: 1 },
+		}));
+	} else {
+		endpointService.publish(configuration, guiMessages.createNavSatFix({
+			frameId: map_fix.frameId,
+			stamp,
 			status: 0,
 			service: 0,
-		},
-		latitude: lla.latitude,
-		longitude: lla.longitude,
-		altitude: lla.altitude ?? 0.0,
-		position_covariance: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-		position_covariance_type: 0,
-	}));
+			latitude: lla.latitude,
+			longitude: lla.longitude,
+			altitude: lla.altitude ?? 0.0,
+			positionCovariance: Array(9).fill(0),
+			positionCovarianceType: 0,
+		}));
+	}
 	status.setOK();
 }
 
 
 window.handleContextMenuAction = function(event, action) {
 	if(action == "goto_point"){
-		if (vehicleSelectionModule.getSelectedVehicle() === null) {
+		const editor = gotoMessageMode === "pose_stamped"
+			? gotoPoseEndpointConfigurationEditor : gotoNavSatFixEndpointConfigurationEditor;
+		if (!vehicleSelectionModule.getSelectedVehicle() || !editor || !editor.activeConfiguration) {
 			return;
 		}
 		let pinX = mapPointer.offsetLeft + mapPointer.width / 2;
@@ -694,44 +747,17 @@ window.handleContextMenuAction = function(event, action) {
 
 
 function initialize(){
-	loadTopics();
-	let fixed_point = fixedPointInput.value.trim();
-	if (fixed_point != "" && fixed_point != default_fixed_point) {
-		setFixedPointButton.click();
-	}
-}
-
-async function loadTopics(){
-	let result = await rosbridge.get_topics("sensor_msgs/msg/NavSatFix");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
+	if (useManualFix) {
+		const fixedPoint = fixedPointInput.value.trim();
+		if (fixedPointHasValidData(fixedPoint)) {
+			setFixedPointButton.click();
+		} else {
+			status.setError("Enter a manual fixed point.");
 		}
+	} else {
+		connect();
 	}
-	connect();
 }
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	connect();
-});
-
-selectionbox.addEventListener("click", (event) => {
-	connect();
-});
 
 
 canvas.addEventListener("contextmenu", (event) => {
@@ -778,8 +804,8 @@ setFixedPointButton.addEventListener("click", (event) => {
 	const alt = parseFloat(parts[3].trim());
 
 
-	if(isNaN(lat) || isNaN(lon) || isNaN(alt)){
-		status.setError("Latitude, longitude, and altitude must be valid numbers.");
+	if(frame_id === "" || isNaN(lat) || isNaN(lon) || isNaN(alt)){
+		status.setError("Frame, latitude, longitude, and altitude must be valid.");
 		return;
 	}
 
@@ -789,34 +815,39 @@ setFixedPointButton.addEventListener("click", (event) => {
 
 	text_frame.innerText = "TF Frame: "+frame_id;
 
-	tf.fixed_frame = frame_id;
-	enu_origin = Navsat.buildEnuOrigin(lat, lon, alt);
-	fix_data = {
-		tilePos: Navsat.coordToTile(lon, lat, zoomLevel)
-	};
+	// The entered geodetic fix is the ENU origin; selecting its frame makes
+	// that origin the map's (0, 0) coordinate and tile-map origin.
+	tf.setFixedFrame(frame_id);
 
-	let header = {
-		frame_id: frame_id,
-		stamp: { sec: 0, nanosec: 0 }
-	};
-	let frame = tf.getAbsoluteTransform(header);
+	const stamp = { sec: 0, nanosec: 0 };
+	let frame = tf.getAbsoluteTransform({ frame_id, stamp });
 	if(!frame){
 		status.setError("Required transform frame \""+frame_id+"\" not found.");
 		return;
 	}
 
 	map_fix = {
-		header: header,
+		frameId: frame_id,
+		stamp,
 		frame: frame,
 		latitude: lat,
 		longitude: lon,
 		altitude: alt,
-		position_covariance: [0,0,0,0,0,0,0,0,0],
-		position_covariance_type: 0
+		positionCovariance: [0,0,0,0,0,0,0,0,0],
+		positionCovarianceType: 0
 	};
+	// The tile corner cache is expressed in the datum's ENU frame. Rebuild it
+	// with the new datum before culling or drawing any tiles.
+	updateFixData();
 
+	// A new datum changes what map (0, 0) represents. Keep the current zoom,
+	// but centre the completed map state before drawing it.
+	view.center = { x: 0, y: 0 };
+	settings.view.center = view.center;
+	settings.save();
+	view.sendUpdateEvent();
+	scheduleDraw();
 	status.setOK();
-	drawTiles();
 	saveSettings();
 });
 
@@ -824,6 +855,70 @@ icon.addEventListener("click", (event) => {
 	initialize();
 });
 
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: navSatFixMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+		if (!useManualFix) {
+			connect();
+		}
+	},
+});
+
+gotoNavSatFixEndpointConfigurationEditor = createEndpointConfiguration({
+	container: gotoNavSatFixEndpointConfigurationContainer,
+	endpointService,
+	guiMessageType: navSatFixMessageType,
+	endpointType: "topic",
+	configuration: gotoNavSatFixEndpointConfiguration,
+	onChange(configuration) {
+		gotoNavSatFixEndpointConfiguration = configuration;
+		saveSettings();
+		updateGotoPointAvailability();
+	},
+});
+
+gotoPoseEndpointConfigurationEditor = createEndpointConfiguration({
+	container: gotoPoseEndpointConfigurationContainer,
+	endpointService,
+	guiMessageType: guiMessages.GUI_MESSAGE_TYPE.POSE_STAMPED,
+	endpointType: "topic",
+	configuration: gotoPoseEndpointConfiguration,
+	onChange(configuration) {
+		gotoPoseEndpointConfiguration = configuration;
+		saveSettings();
+		updateGotoPointAvailability();
+	},
+});
+
+publishPoseStampedBox.addEventListener("change", () => {
+	gotoMessageMode = publishPoseStampedBox.checked ? "pose_stamped" : "navsatfix";
+	updateGotoEndpointConfigurationVisibility();
+	saveSettings();
+});
+
+
+useManualFixBox.addEventListener("change", () => {
+	useManualFix = useManualFixBox.checked;
+	updateFixSourceVisibility();
+	saveSettings();
+	if (mapSubscription !== undefined) {
+		mapSubscription.unsubscribe();
+		mapSubscription = undefined;
+	}
+	initialize();
+});
+
+await endpointConfigurationEditor.refresh();
+await gotoNavSatFixEndpointConfigurationEditor.refresh();
+await gotoPoseEndpointConfigurationEditor.refresh();
+updateGotoEndpointConfigurationVisibility();
+updateFixSourceVisibility();
 initialize();
 
 
@@ -836,7 +931,7 @@ function resizeScreen(){
 window.addEventListener("navsat_tilecache_updated", scheduleDraw);
 window.addEventListener("tf_fixed_frame_changed", scheduleDraw);
 window.addEventListener("tf_changed", ()=>{
-	if(map_fix && map_fix.header.frame_id != tf.fixed_frame){
+	if(map_fix && map_fix.frameId != tf.fixed_frame){
 		scheduleDraw();
 	}
 });

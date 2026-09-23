@@ -1,29 +1,27 @@
 import assert from 'assert';
 import { runTemplateContract } from './template_test_helpers.mjs';
-import { loadFunctions, environment, plain } from './plugin_harness.mjs';
+import { loadFunctions, plain, spy } from './plugin_harness.mjs';
 
 describe('reconfigure plugin services', function () {
     it('preserves required template assets and placeholders', function () {
         runTemplateContract('reconfigure');
     });
 
-    it('parses parameters returned by the node-parameter service', async function () {
-        const ctx = loadFunctions('reconfigure', ['getNodeParameters'], environment());
+    it('requests parameters through the configured adapter', async function () {
+        const adapterConfiguration = { adapterId: 'ros2', values: { namespace: '' } };
+        const endpointService = { getNodeParameters: spy(() => Promise.resolve([['speed', 2, 2]])) };
+        const ctx = loadFunctions('reconfigure', ['getNodeParameters'], { endpointService, adapterConfiguration });
         const pending = ctx.getNodeParameters('/node');
-        const service = ctx.services[0];
-        assert.strictEqual(service.options.name, '/vizanti/get_node_parameters');
-        assert.deepStrictEqual(plain(service.request), { node: '/node' });
-        service.resolve({ parameters: '{"speed": 2}' });
-        assert.deepStrictEqual(plain(await pending), { speed: 2 });
+        assert.deepStrictEqual(endpointService.getNodeParameters.calls, [[adapterConfiguration, '/node']]);
+        assert.deepStrictEqual(plain(await pending), [['speed', 2, 2]]);
     });
 
-    it('serializes node, parameter, and value for the parameter-update service', async function () {
-        const ctx = loadFunctions('reconfigure', ['setNodeParameter'], environment());
+    it('updates parameters through the configured adapter', async function () {
+        const adapterConfiguration = { adapterId: 'ros2', values: { namespace: '' } };
+        const endpointService = { setNodeParameter: spy(() => Promise.resolve({ success: true })) };
+        const ctx = loadFunctions('reconfigure', ['setNodeParameter'], { endpointService, adapterConfiguration });
         const pending = ctx.setNodeParameter('/node', 'speed', 2.5);
-        const service = ctx.services[0];
-        assert.strictEqual(service.options.name, '/vizanti/set_node_parameter');
-        assert.deepStrictEqual(plain(service.request), { node: '/node', param: 'speed', value: '2.5' });
-        service.resolve({ success: true });
+        assert.deepStrictEqual(endpointService.setNodeParameter.calls, [[adapterConfiguration, '/node', 'speed', 2.5]]);
         assert.deepStrictEqual(plain(await pending), { success: true });
     });
 });

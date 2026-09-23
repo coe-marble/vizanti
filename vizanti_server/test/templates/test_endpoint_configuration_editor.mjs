@@ -81,7 +81,7 @@ describe('endpoint configuration editor', function () {
 				],
 				listOutputMessages: () => [{ id: 'std_msgs/msg/Float64', label: 'Float64' }],
 				allowsDiscovery: () => true,
-				async listEndpoints() { return []; },
+				async discoverEndpoints() { return []; },
 				createManualEndpoint(...args) {
 					manualCalls.push(args);
 					const address = args[5];
@@ -130,7 +130,7 @@ describe('endpoint configuration editor', function () {
 				],
 				listOutputMessages: () => [{ id: 'std_msgs/msg/Float64', label: 'Float64' }],
 				allowsDiscovery: () => true,
-				async listEndpoints() { return []; },
+				async discoverEndpoints() { return []; },
 			};
 			const savedEndpoint = {
 				topic: '/robot/depth_target',
@@ -214,7 +214,7 @@ describe('endpoint configuration editor', function () {
 				],
 				listOutputMessages: () => [{ id: 'geometry_msgs/msg/PoseStamped', label: 'PoseStamped' }],
 				allowsDiscovery: () => true,
-				async listEndpoints() { discoveryCalls += 1; return []; },
+				async discoverEndpoints() { discoveryCalls += 1; return []; },
 			};
 			const container = document.createElement('div');
 			const configuration = createEndpointConfiguration({

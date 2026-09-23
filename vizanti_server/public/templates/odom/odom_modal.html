@@ -4,10 +4,19 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
-		<label for="{uniqueID}_topic">Target:</label>
-		<select id="{uniqueID}_topic" name="topic">
-			<!-- add topics here-->
+		<label for="{uniqueID}_source_mode">Source:</label>
+		<select id="{uniqueID}_source_mode">
+			<option value="topic">Odometry topic</option>
+			<option value="tf">TF frame</option>
 		</select>
+
+		<div id="{uniqueID}_endpoint_source">
+			<div id="{uniqueID}_endpoint_configuration"></div>
+		</div>
+		<div id="{uniqueID}_tf_source">
+			<label for="{uniqueID}_tf_frame">TF frame:</label>
+			<select id="{uniqueID}_tf_frame"></select>
+		</div>
 
 		<p>Track a TF link or nav_msgs/Odometry data.</p>
 

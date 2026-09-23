@@ -69,7 +69,13 @@ function initializeNav() {
 			icon_container.appendChild(createElement(template.icon, eid));
 		else if(typeof container !== 'undefined' && container !== "icon_container"){
 			const container_element = document.getElementById(container);
-			container_element.insertBefore(createElement(template.icon, eid), container_element.querySelector("[data-uniqueid='addbutton']"));
+			const add_button = container_element && container_element.querySelector("[data-uniqueid='addbutton']");
+			if (container_element && add_button) {
+				container_element.insertBefore(createElement(template.icon, eid), add_button);
+			} else {
+				console.warn(`Widget ${eid} references missing container ${container}; placing it in the icon bar.`);
+				icon_container.appendChild(createElement(template.icon, eid));
+			}
 		}
 
 		if (template.hasOwnProperty("modal"))
@@ -163,4 +169,3 @@ if (document.readyState !== 'loading') {
         loadAll();
     });
 }
-

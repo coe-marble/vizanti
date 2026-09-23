@@ -1,38 +1,38 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
-let topic = getTopic("{uniqueID}");
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.POSE_WITH_COVARIANCE;
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 }else{
-	saveSettings();
-}
-
-if(topic == ""){
-	topic = "/initialpose";
-	status.setWarn("No topic found, defaulting to /initialpose");
 	saveSettings();
 }
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic
+		endpoint_configuration: endpointConfiguration,
 	}
 	settings.save();
 }
@@ -40,6 +40,10 @@ function saveSettings(){
 function sendMessage(pos, delta){
 	if(!pos || !delta){
 		status.setError("Could not send message, pose invalid.");
+		return;
+	}
+	const configuration = getEndpointConfiguration();
+	if (!configuration) {
 		return;
 	}
 
@@ -52,39 +56,13 @@ function sendMessage(pos, delta){
 	const currentTimeSecs = Math.floor(currentTime.getTime() / 1000);
 	const currentTimeNsecs = (currentTime.getTime() % 1000) * 1e6;
 
-	const publisher = new ROSLIB.Topic({
-		ros: rosbridge.ros,
-		name: topic,
-		messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
-	});
-
-	const poseMessage = new ROSLIB.Message({
-		header: {
-			stamp: {
-				sec: currentTimeSecs,
-				nanosec: currentTimeNsecs
-			},
-			frame_id: tf.fixed_frame
-		},
-		pose: {
-			pose: {
-				position: {
-					x: map_pos.x,
-					y: map_pos.y,
-					z: 0.0
-				},
-				orientation: {
-					x: quat.x,
-					y: quat.y,
-					z: quat.z,
-					w: quat.w
-				}
-			},
-			covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
-		}
-	});	
-	publisher.publish(poseMessage);
-	publisher.unadvertise();
+	endpointService.publish(configuration, guiMessages.createPoseWithCovariance({
+		stamp: { sec: currentTimeSecs, nanosec: currentTimeNsecs },
+		frameId: tf.fixed_frame,
+		position: { x: map_pos.x, y: map_pos.y, z: 0.0 },
+		orientation: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
+		covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787],
+	}));
 
 	status.setOK();
 }
@@ -137,7 +115,13 @@ function drag(event){
 }
 
 function endDrag(event){
-	sendMessage(start_point, delta);
+	if (start_point === undefined) {
+		return;
+	}
+
+	// A placement click has no movement event. Use a forward heading so it
+	// still produces a valid initial pose; dragging continues to set heading.
+	sendMessage(start_point, delta || { x: -1, y: 0 });
 
 	start_point = undefined;
 	delta = undefined;
@@ -188,35 +172,27 @@ function setActive(value){
 	}
 }
 
-// Topics
-
-const selectionbox = document.getElementById("{uniqueID}_topic");
-
-async function loadTopics(){
-	let result = await rosbridge.get_topics("geometry_msgs/msg/PoseWithCovarianceStamped");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(result.includes(topic)){
-		selectionbox.value = topic;
-	}else{
-		topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-		selectionbox.innerHTML = topiclist
-		selectionbox.value = topic;
+function getEndpointConfiguration() {
+	const configuration = endpointConfigurationEditor.activeConfiguration;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured endpoint.");
+		return null;
 	}
+	return configuration;
 }
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	saveSettings();
-	status.setOK();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+	},
 });
-
-loadTopics();
 
 // Long press modal open stuff
 
@@ -246,7 +222,7 @@ function startLongPress(event) {
 	isLongPress = false;
 	longPressTimer = setTimeout(() => {
 		isLongPress = true;
-		loadTopics();
+		endpointConfigurationEditor.refresh();
 		openModal("{uniqueID}_modal");
 	}, 500);
 }
@@ -256,5 +232,6 @@ function cancelLongPress(event) {
 }
 
 resizeScreen();
+endpointConfigurationEditor.refresh();
 
 console.log("Initialpose Widget Loaded {uniqueID}")

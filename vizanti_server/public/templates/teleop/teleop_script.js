@@ -1,30 +1,33 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let joystickModule = await import(`${base_url}/js/modules/joystick.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let nipplejs = joystickModule.nipplejs;
 let Status = StatusModule.Status;
 let imageToDataURL = utilModule.imageToDataURL;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.TWIST;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
 
-let typedict = {};
 let joy_offset_x = "50%";
 let joy_offset_y = "85%";
 let joy_locked = false;
-let cmdVelPublisher = undefined;
 
 //experimental keyboard control
 let keybindings = {
@@ -65,7 +68,6 @@ function updateColor(color, alpha){
 	utilModule.setIconColor(icon_locked, combined_color);
 }
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const click_icon = document.getElementById("{uniqueID}_icon");
 const icon = document.getElementById("{uniqueID}_icon_svg");
 const icon_locked = document.getElementById("{uniqueID}_icon_svg_locked");
@@ -272,9 +274,7 @@ presetSelectorBox.addEventListener('change', function () {
 // Settings
 if (settings.hasOwnProperty('{uniqueID}')) {
 	const loaded_data = settings['{uniqueID}'];
-	topic = loaded_data.topic;
-
-	typedict = loaded_data.typedict ?? {};
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 	joy_offset_x = loaded_data.joy_offset_x;
 	joy_offset_y = loaded_data.joy_offset_y;
 
@@ -344,15 +344,9 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 	saveSettings();
 }
 
-if(topic == ""){
-	topic = "/cmd_vel";
-	status.setWarn("No topic found, defaulting to /cmd_vel");
-	saveSettings();
-}
-
 function saveSettings() {
 	settings['{uniqueID}'] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 
 		color: colourpickerBox.value,
 		opacity: opacityBox.value,
@@ -384,119 +378,44 @@ function saveSettings() {
 
 		joy_offset_x: joy_offset_x,
 		joy_offset_y: joy_offset_y,
-		joy_locked: joy_locked,
-
-		typedict: typedict
+		joy_locked: joy_locked
 	};
 	settings.save();
 	updateKeyButtons();
 }
 
-// Topic and connections
-
-async function loadTopics(){
-	let twist_topics = await rosbridge.get_topics("geometry_msgs/msg/Twist");
-	let stamped_topics = await rosbridge.get_topics("geometry_msgs/msg/TwistStamped");
-
-	let topiclist = "";
-	twist_topics.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (Twist)</option>";
-		typedict[element] = "geometry_msgs/msg/Twist";
-	});
-	stamped_topics.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (TwistStamped)</option>";
-		typedict[element] = "geometry_msgs/msg/TwistStamped";
-	});
-
-	selectionbox.innerHTML = topiclist;
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(twist_topics.includes(topic) || stamped_topics.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-function connect(){
-	if(cmdVelPublisher !== undefined){
-		cmdVelPublisher.unadvertise();
-	}
-
-	cmdVelPublisher = new ROSLIB.Topic({
-		ros: rosbridge.ros,
-		name: topic,
-		messageType : typedict[topic],
-		queue_size: 1
-	});
-}
-
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+	},
+});
+endpointConfigurationEditor.refresh();
 
 function publishTwist(x, y, z, wx, wy, wz) {
 
 	if(joy_locked)
 		return;
-
-	function getStamp(){
-		const currentTime = new Date();
-		const currentTimeSecs = Math.floor(currentTime.getTime() / 1000);
-		const currentTimeNsecs = (currentTime.getTime() % 1000) * 1e6;
-
-		return {
-			sec: currentTimeSecs,
-			nanosec: currentTimeNsecs
-		}
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No velocity endpoint configured.");
+		return;
 	}
-
-	function getTwist(x, y, z, wx, wy, wz){
-		return new ROSLIB.Message({
-			linear: {
-				x: x,
-				y: y,
-				z: z
-			},
-			angular: {
-				x: wx,
-				y: wy,
-				z: wz
-			}
-		});
-	}
-
-	function getTwistStamped(x, y, z, wx, wy, wz){
-		return new ROSLIB.Message({
-			header: {
-				stamp: getStamp(),
-				frame_id: tf.fixed_frame
-			},
-			twist: getTwist(x, y, z, wx, wy, wz)
-		});
-	}
-
-	if(typedict[topic] == "geometry_msgs/msg/Twist"){
-		cmdVelPublisher.publish(getTwist(x, y, z, wx, wy, wz));
-	}else{
-		cmdVelPublisher.publish(getTwistStamped(x, y, z, wx, wy, wz));
-	}
+	const now = Date.now();
+	endpointService.publish(configuration, guiMessages.createTwist({
+		linear: { x, y, z },
+		angular: { x: wx, y: wy, z: wz },
+		frameId: tf.fixed_frame,
+		stamp: { sec: Math.floor(now / 1000), nanosec: (now % 1000) * 1e6 },
+	}));
 }
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	saveSettings();
-	connect();
-	status.setOK();
-});
-
-selectionbox.addEventListener("click", (event) => {
-	connect();
-});
-
 
 // Long press modal open stuff
 function setLock(lock){
@@ -521,7 +440,6 @@ let isLongPress = false;
 
 click_icon.addEventListener("click", (event) =>{
 	if(!isLongPress){
-		loadTopics();
 		openModal("{uniqueID}_modal");
 	}else{
 		isLongPress = false;
@@ -552,8 +470,6 @@ function startLongPress(event) {
 function cancelLongPress(event) {
 	clearTimeout(longPressTimer);
 }
-
-loadTopics();
 
 function set_text_pos_val(element, x, y){
 	element.style.left = `calc(${joy_offset_x} + ${x}px)`;

@@ -34,8 +34,22 @@ export class Settings {
 	}
 
 	fromJSON(settings_object) {
-		let storedSettings = JSON.parse(settings_object);
+		const storedSettings = JSON.parse(settings_object);
+		if (!storedSettings || Array.isArray(storedSettings) || typeof storedSettings !== "object") {
+			throw new TypeError("Settings must be a JSON object.");
+		}
+
+		// A settings import represents a complete application state. Remove all
+		// existing persistent keys so stale widgets cannot survive an import.
+		for (const key of Object.keys(this)) {
+			delete this[key];
+		}
 		Object.assign(this, storedSettings);
+	}
+
+	resetToDefault() {
+		this.fromJSON(default_config);
+		this.flush();
 	}
 
 	save() {

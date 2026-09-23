@@ -4,12 +4,9 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
-		<label for="{uniqueID}_topic">Topic:</label>
-		<select id="{uniqueID}_topic" name="topic">
-			<!-- add topics here-->
-		</select>
+		<div id="{uniqueID}_endpoint_configuration"></div>
 
-		<p>Display a nav_msgs/GridCells message that typically represents sparse navigational obstacles.</p>
+		<p>Display sparse navigational obstacles from the configured endpoint.</p>
 
 		<div class="spacer"></div>
 
@@ -24,8 +21,8 @@
 
 		<div class="spacer"></div>
 
-		<label for="{uniqueID}_throttle">Socket throttle (ms):</label>
-		<input type="number" value="500" step="0" min="0" max="10000" id="{uniqueID}_throttle">
+		<label for="{uniqueID}_throttle">Delivery throttle (ms):</label>
+		<input type="number" value="500" step="1" min="0" max="10000" id="{uniqueID}_throttle">
 
 		<div class="spacer"></div>
 

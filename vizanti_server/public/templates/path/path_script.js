@@ -1,25 +1,29 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.PATH;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let listener = undefined;
-let path_topic = undefined;
+let subscription = undefined;
 
 let pose_array = undefined;
 
@@ -27,7 +31,6 @@ const text_frameid = document.getElementById("{uniqueID}_frame_text");
 const text_point_count = document.getElementById("{uniqueID}_points_text");
 const text_total_dist = document.getElementById("{uniqueID}_distance_text");
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const click_icon = document.getElementById("{uniqueID}_icon");
 const icon = click_icon.getElementsByTagName('object')[0];
 
@@ -67,7 +70,7 @@ opacitySlider.addEventListener('input', () =>  {
 //Settings
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 
 	opacitySlider.value = loaded_data.opacity ?? 1.0;
 	setOpacityText(loaded_data.opacity);
@@ -88,7 +91,7 @@ if (icon.contentDocument) {
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		color: colourpicker.value,
 		throttle: throttle.value,
 		opacity: opacitySlider.value
@@ -96,26 +99,19 @@ function saveSettings(){
 	settings.save();
 }
 
-function getDistance(posearray) {
-    if (!Array.isArray(posearray) || posearray.length < 2)
-		return 0;
-    
-    let dist = 0;
-    for (let i = 0; i < posearray.length - 1; i++) {
-        const pose1 = posearray[i]?.pose?.position;
-        const pose2 = posearray[i + 1]?.pose?.position;
-        
-        // Skip this pair if either point is missing
-        if (!pose1 || !pose2) continue;
-        
-        const dx = pose2.x - pose1.x;
-        const dy = pose2.y - pose1.y;
-        const dz = pose2.z - pose1.z;
-        
-        dist += Math.sqrt(dx * dx + dy * dy + dz * dz);
-    }
-    
-    return dist;
+function activeEndpointConfiguration() {
+	return endpointConfigurationEditor ? endpointConfigurationEditor.activeConfiguration : null;
+}
+
+function getDistance(poses) {
+	if (!Array.isArray(poses) || poses.length < 2) return 0;
+	return poses.slice(1).reduce((distance, pose, index) => {
+		const previous = poses[index];
+		const dx = pose.position.x - previous.position.x;
+		const dy = pose.position.y - previous.position.y;
+		const dz = pose.position.z - previous.position.z;
+		return distance + Math.sqrt(dx * dx + dy * dy + dz * dz);
+	}, 0);
 }
 
 //Rendering
@@ -153,125 +149,67 @@ async function drawPath(){
 	ctx.stroke();
 }
 
-//Topic
 function connect(){
-
-	if(topic == ""){
-		status.setError("Empty topic.");
+	if (subscription) subscription.unsubscribe();
+	subscription = undefined;
+	const configuration = activeEndpointConfiguration();
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No path endpoint configured.");
 		return;
 	}
-
-	if(path_topic !== undefined){
-		path_topic.unsubscribe(listener);
-	}
-
-	path_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'nav_msgs/msg/Path',
-		throttle_rate: parseInt(throttle.value),
-		compression: rosbridge.compression,
-		queue_length: 1
-	});
+	tf = endpointService.getTf(configuration.adapterId);
 
 	status.setWarn("No data received.");
-	
-	listener = path_topic.subscribe((msg) => {
-		
-		let error = false;
-		let newposes = [];
-
-		if(msg.poses == undefined){
-			status.setWarn("Received uninitialized list of poses. Wat.");
-			error = true;
-			return;
-		}
-
-		msg.poses.forEach((point, index) => {
-
-			if(point.header.frame_id == ""){
-				status.setWarn("Transform frame is an empty string, falling back to fixed frame. Fix your publisher ;)");
-				point.header.frame_id = tf.fixed_frame;
-				error = true;
-			}
-	
-			if(!tf.absoluteTransforms[point.header.frame_id]){
-				status.setError("Required transform frame \""+point.header.frame_id+"\" not found.");
-				error = true;
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		let hasWarning = false;
+		const transformed = [];
+		for (const pose of message.poses) {
+			const frameId = pose.frameId || tf.fixed_frame;
+			if (pose.frameId === "") hasWarning = true;
+			if (!tf.absoluteTransforms[frameId]) {
+				status.setError(`Required transform frame "${frameId}" not found.`);
 				return;
 			}
-	
-			newposes.push(tf.transformPoseStamped(
-				point.header, 
-				point.pose.position, 
-				point.pose.orientation
+			transformed.push(tf.transformPoseStamped(
+				{ frameId, stamp: pose.stamp }, pose.position, pose.orientation
 			));
-		});
+		}
 
-		text_frameid.innerText = "Frame: "+msg.header.frame_id;
-		text_point_count.innerText = "Points: "+msg.poses.length;
-
-		let dist = getDistance(msg.poses)
+		text_frameid.innerText = `Frame: ${message.frameId}`;
+		text_point_count.innerText = `Points: ${message.poses.length}`;
+		let dist = getDistance(message.poses);
 
 		if(dist > 1000.0){
-			dist /= 1000.0
-			text_total_dist.innerText = "Distance: "+dist.toFixed(3)+" km";
+			text_total_dist.innerText = `Distance: ${(dist / 1000.0).toFixed(3)} km`;
 		}else if(dist < 1.0){
-			dist *= 100.0
-			text_total_dist.innerText = "Distance: "+dist.toFixed(1)+" cm";
+			text_total_dist.innerText = `Distance: ${(dist * 100.0).toFixed(1)} cm`;
 		}else{
-			text_total_dist.innerText = "Distance: "+dist.toFixed(2)+" m";
+			text_total_dist.innerText = `Distance: ${dist.toFixed(2)} m`;
 		}
 
-		pose_array = newposes;
+		pose_array = transformed;
 		drawPath();
-
-		if(!error){
-			status.setOK();
-		}
-	});
+		if (hasWarning) status.setWarn("An empty transform frame was treated as the fixed frame.");
+		else status.setOK();
+	}, { throttleRate: parseInt(throttle.value), queueLength: 1 });
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("nav_msgs/msg/Path");
-
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
-}
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	pose_array = undefined;
-	connect();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		pose_array = undefined;
+		connect();
+	},
 });
-
-selectionbox.addEventListener("click", (event) => {
-	connect();
-});
-
-click_icon.addEventListener("click", (event) => {
-	loadTopics();
-});
-
-loadTopics();
+endpointConfigurationEditor.refresh();
 
 function resizeScreen(){
 	canvas.height = window.innerHeight;
@@ -286,4 +224,4 @@ window.addEventListener('orientationchange', resizeScreen);
 
 resizeScreen();
 
-console.log("MarkerArray Widget Loaded {uniqueID}")
+console.log("Path Widget Loaded {uniqueID}")

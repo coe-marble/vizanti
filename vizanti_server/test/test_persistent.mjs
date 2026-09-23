@@ -48,11 +48,12 @@ source += '\nreturn { Settings, settings };';
 	stored.fromJSON(JSON.stringify({ custom: false, extra: 'value' }));
 	assert.equal(stored.custom, false);
 	assert.equal(stored.extra, 'value');
+	assert.equal(Object.prototype.hasOwnProperty.call(stored, 'view'), false);
 	stored.save();
 	const persisted = JSON.parse(storage.get('settings'));
 	assert.equal(persisted.custom, false);
 	assert.equal(persisted.extra, 'value');
-	assert.deepEqual(persisted.view, { scale: 25 });
+	assert.equal(Object.prototype.hasOwnProperty.call(persisted, 'view'), false);
 	stored.flush();
 
 	stored.extra = 'first write';
@@ -62,6 +63,14 @@ source += '\nreturn { Settings, settings };';
 	assert.equal(JSON.parse(storage.get('settings')).extra, 'first write');
 	stored.flush();
 	assert.equal(JSON.parse(storage.get('settings')).extra, 'latest write');
+
+	stored.resetToDefault();
+	assert.deepEqual(stored.navbar, [{ type: 'grid', id: 'default_grid' }]);
+	assert.deepEqual(stored.view, { scale: 50 });
+	assert.equal(Object.prototype.hasOwnProperty.call(stored, 'custom'), false);
+	assert.deepEqual(JSON.parse(storage.get('settings')), {
+		navbar: [{ type: 'grid', id: 'default_grid' }], view: { scale: 50 },
+	});
 	console.log('persistent settings tests passed');
 })().catch(error => {
 	console.error(error);

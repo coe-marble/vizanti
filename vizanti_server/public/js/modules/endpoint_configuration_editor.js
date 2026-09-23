@@ -233,10 +233,15 @@ export function createEndpointConfigurationEditor({
 			await applyManualEndpoint();
 			return;
 		}
-		const choices = await endpointService.listEndpoints(
-			currentAdapterId(), currentAdapterValues(), endpointType, guiMessageType,
-			value.outputMessageId, value.endpointValues || {},
-		);
+		const choices = await endpointService.discoverEndpoints({
+			adapterConfiguration: {
+				adapterId: currentAdapterId(), values: currentAdapterValues(),
+			},
+			endpointType,
+			guiMessageType,
+			outputMessageId: value.outputMessageId,
+			endpointValues: value.endpointValues || {},
+		});
 		if (value.endpointMode === "manual") {
 			renderOptions(endpoint, choices, "", "(Disabled)");
 			renderManualEndpointInput();
@@ -333,10 +338,15 @@ export function createEndpointConfigurationEditor({
 		await refreshEndpoints();
 	});
 	endpoint.addEventListener("change", async () => {
-		const choices = await endpointService.listEndpoints(
-			currentAdapterId(), currentAdapterValues(), endpointType, guiMessageType,
-			value.outputMessageId, value.endpointValues || {},
-		);
+		const choices = await endpointService.discoverEndpoints({
+			adapterConfiguration: {
+				adapterId: currentAdapterId(), values: currentAdapterValues(),
+			},
+			endpointType,
+			guiMessageType,
+			outputMessageId: value.outputMessageId,
+			endpointValues: value.endpointValues || {},
+		});
 		const selected = choices.find((choice) => choice.id === endpoint.value);
 		value = {
 			...value,

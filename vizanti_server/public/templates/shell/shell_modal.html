@@ -1,0 +1,33 @@
+<div id="{uniqueID}_modal" class="modal_outer noselect">
+	<div class="modal_inner noselect">
+		<h3>Shell</h3>
+		<hr class="dark_hr"/>
+
+		<div id="{uniqueID}_adapter_configuration"></div>
+
+		<div id="{uniqueID}_shortcuts_section">
+			<div class="spacer"></div>
+			<label for="{uniqueID}_shortcuts">Shortcut:</label>
+			<select id="{uniqueID}_shortcuts"></select>
+			<button id="{uniqueID}_apply_shortcut">Use</button>
+		</div>
+
+		<div class="spacer"></div>
+		<label for="{uniqueID}_command">Command:</label>
+		<textarea id="{uniqueID}_command" rows="4" placeholder="Enter one command"></textarea>
+
+		<div class="spacer"></div>
+		<label for="{uniqueID}_timeout">Timeout (seconds):</label>
+		<input id="{uniqueID}_timeout" type="number" min="1" max="30" step="1" value="10">
+		<label><input id="{uniqueID}_background" type="checkbox"> Start in background</label>
+
+		<div class="spacer"></div>
+		<button id="{uniqueID}_run">Run</button>
+		<p id="{uniqueID}_status" class="status"></p>
+
+		<pre id="{uniqueID}_output" style="white-space: pre-wrap;"></pre>
+
+		<hr class="dark_hr"/>
+		<button id="{uniqueID}_remove" class="delete_button" onclick="removeWidget('{uniqueID}')">Remove Widget</button>
+	</div>
+</div>

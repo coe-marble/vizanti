@@ -1,32 +1,61 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let imageToDataURL = utilModule.imageToDataURL;
 let Status = StatusModule.Status;
+let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
-
-let topic = getTopic("{uniqueID}");
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.BATTERY_STATE;
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+let subscription = undefined;
+
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration
+		?? legacyEndpointConfiguration(loaded_data.topic);
 }else{
 	saveSettings();
 }
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 	}
 	settings.save();
+}
+
+function legacyEndpointConfiguration(topic) {
+	const endpointId = typeof topic === "string" ? topic.trim() : "";
+	return {
+		mode: "manual",
+		robotModelId: "",
+		manualAdapterConfiguration: {
+			adapterId: "ros2",
+			values: { namespace: "", tfFrame: "base_link" },
+		},
+		endpointConfiguration: {
+			endpointValues: {},
+			outputMessageId: "",
+			endpointId,
+			manualEndpointId: endpointId,
+			endpoint: null,
+			endpointMode: "manual",
+		},
+	};
 }
 
 let icons = {};
@@ -72,7 +101,6 @@ const CHEMISTRY = [
 	"LIMN"
 ]
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
 
 const text_percent = document.getElementById("{uniqueID}_percentage");
@@ -85,75 +113,64 @@ const text_status = document.getElementById("{uniqueID}_charging_status");
 const text_health = document.getElementById("{uniqueID}_health");
 const text_chemistry = document.getElementById("{uniqueID}_chemistry");
 
-let listener = undefined;
-let batterytopic = undefined;
-
 function connect(){
+	if(subscription !== undefined){
+		subscription.unsubscribe();
+		subscription = undefined;
+	}
 
-	if(topic == ""){
-		status.setError("Empty topic.");
+	const activeConfiguration = activeEndpointConfiguration();
+	if(!activeConfiguration || !activeConfiguration.endpoint){
+		status.setError("Select a battery endpoint.");
 		return;
 	}
 
-	if(batterytopic !== undefined){
-		batterytopic.unsubscribe(listener);
-	}
-
-	batterytopic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'sensor_msgs/msg/BatteryState',
-		throttle_rate: 500, // throttle to twice a second max
-		compression: rosbridge.compression,
-		queue_length: 1
-	});
-
 	status.setWarn("No data received.");
 	
-	listener = batterytopic.subscribe((msg) => {
+	subscription = endpointService.subscribe(activeConfiguration, endpointMessageType, (message) => {
 
-		let chg_prefix = msg.power_supply_status == 1 ? "charging_": "";
+		let chg_prefix = message.powerSupplyStatus == 1 ? "charging_": "";
 
-		if(msg.percentage <= 0.2){
+		if(message.percentage <= 0.2){
 			icon.src = icons[chg_prefix+"20%"];
 		}
-		else if(msg.percentage <= 0.4){
+		else if(message.percentage <= 0.4){
 			icon.src = icons[chg_prefix+"40%"];
 		}
-		else if(msg.percentage <= 0.6){
+		else if(message.percentage <= 0.6){
 			icon.src = icons[chg_prefix+"60%"];
 		}
-		else if(msg.percentage <= 0.8){
+		else if(message.percentage <= 0.8){
 			icon.src = icons[chg_prefix+"80%"];
 		}
 		else{
 			icon.src = icons[chg_prefix+"100%"];
 		}
 
-		text_percent.innerText = "Percentage: "+parseInt(msg.percentage*100)+" %";
+		text_percent.innerText = "Percentage: "+parseInt(message.percentage*100)+" %";
 
-		if(msg.voltage)
-			text_voltage.innerText = "Voltage: "+msg.voltage.toFixed(2)+" V";
+		if(message.voltage)
+			text_voltage.innerText = "Voltage: "+message.voltage.toFixed(2)+" V";
 
-		if(msg.current)
-			text_current.innerText = "Current draw: "+msg.current.toFixed(2)+" A";
+		if(message.current)
+			text_current.innerText = "Current draw: "+message.current.toFixed(2)+" A";
 
-		if(msg.charge)
-			text_charge.innerText = "Charge: "+msg.charge.toFixed(2)+"/"+msg.capacity.toFixed(2)+" Ah";
+		if(message.charge)
+			text_charge.innerText = "Charge: "+message.charge.toFixed(2)+"/"+message.capacity.toFixed(2)+" Ah";
 
-		if(msg.cell_voltage.length > 0){
+		if(message.cellVoltage.length > 0){
 			let cellstr = "Cell Voltages: ";
 
-			for(let i = 0; i < msg.cell_voltage.length; i++){
-				cellstr += msg.cell_voltage[i].toFixed(2)+" V, ";
+			for(let i = 0; i < message.cellVoltage.length; i++){
+				cellstr += message.cellVoltage[i].toFixed(2)+" V, ";
 			}
 
 			text_cell_voltage.innerText = cellstr.substring(0, cellstr.length - 2);
 		}
 
-		text_status.innerText = "Status: "+STATUS[msg.power_supply_status];
-		text_health.innerText = "Health: "+HEALTH[msg.power_supply_health];
-		text_chemistry.innerText = "Type: "+CHEMISTRY[msg.power_supply_technology];
+		text_status.innerText = "Status: "+STATUS[message.powerSupplyStatus];
+		text_health.innerText = "Health: "+HEALTH[message.powerSupplyHealth];
+		text_chemistry.innerText = "Type: "+CHEMISTRY[message.powerSupplyTechnology];
 
 		status.setOK();
 	});
@@ -161,38 +178,29 @@ function connect(){
 	saveSettings();
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("sensor_msgs/msg/BatteryState");
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-	connect();
+function activeEndpointConfiguration() {
+	return endpointConfigurationEditor ? endpointConfigurationEditor.activeConfiguration : null;
 }
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	icon.src = icons["unknown"];
-	connect();
-	saveSettings();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		icon.src = icons["unknown"];
+		saveSettings();
+		connect();
+	},
 });
 
-selectionbox.addEventListener("click", connect);
-icon.addEventListener("click", loadTopics);
+icon.addEventListener("click", ()=>{
+	endpointConfigurationEditor.refresh();
+});
 
-loadTopics();
+endpointConfigurationEditor.refresh();
 
 console.log("Battery Widget Loaded {uniqueID}")

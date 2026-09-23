@@ -85,7 +85,7 @@ document.getElementById("{uniqueID}_delete_persistent").addEventListener("click"
 	let del_ok = await confirm("Are you sure you want to delete your saved widget setup? This will refresh the page.");
 
 	if(del_ok){
-		localStorage.removeItem("settings");
+		settings.resetToDefault();
 		window.location.reload();
 	}
 
@@ -114,7 +114,9 @@ document.getElementById("{uniqueID}_import_persistent").addEventListener("click"
 		reader.onload = () => {
 			try {
 				settings.fromJSON(reader.result);
-				settings.save();
+				// Persist before reloading. save() may be batched behind an earlier
+				// write, while an imported configuration must take effect immediately.
+				settings.flush();
 				location.reload(false);
 			} catch (error) {
 				console.error('Error importing JSON file:', error);

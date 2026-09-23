@@ -10,10 +10,18 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
-		<label for="{uniqueID}_topic">Topic:</label>
-		<select id="{uniqueID}_topic" name="topic">
-			<!-- add topics here-->
+		<label for="{uniqueID}_source_mode">Source:</label>
+		<select id="{uniqueID}_source_mode">
+			<option value="imu">IMU endpoint</option>
+			<option value="tf">TF frame</option>
 		</select>
+
+		<div id="{uniqueID}_endpoint_configuration"></div>
+
+		<div id="{uniqueID}_tf_source">
+			<label for="{uniqueID}_tf_frame">TF frame:</label>
+			<select id="{uniqueID}_tf_frame"></select>
+		</div>
 
 		<div class="spacer"></div>
 
@@ -75,8 +83,8 @@
 
 		<div class="spacer"></div>
 
-		<label for="{uniqueID}_throttle">Socket throttle (ms):</label>
-		<input type="number" value="30" step="0" min="0" max="10000" id="{uniqueID}_throttle">
+		<label for="{uniqueID}_throttle">Delivery throttle (ms):</label>
+		<input type="number" value="30" step="1" min="0" max="10000" id="{uniqueID}_throttle">
 
 		<div class="spacer"></div>
 

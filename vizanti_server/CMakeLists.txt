@@ -17,10 +17,8 @@ find_package(rclcpp REQUIRED)
 find_package(rclpy REQUIRED)
 
 find_package(std_msgs REQUIRED)
-find_package(std_srvs REQUIRED)
 find_package(tf2_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(vizanti_msgs REQUIRED)
 find_package(rosbridge_suite REQUIRED)
 
 install(DIRECTORY
@@ -33,8 +31,12 @@ install(PROGRAMS
   scripts/__init__.py
   scripts/bt_file_manager.py
   scripts/server.py
-  scripts/service_handler.py
   scripts/rqt_reconfigure_param_api.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(FILES
+  scripts/service_handler.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

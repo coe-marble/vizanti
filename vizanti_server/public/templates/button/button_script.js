@@ -1,34 +1,55 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
+let endpointService = endpointServiceModule.endpointService;
 let settings = persistentModule.settings;
 let imageToDataURL = utilModule.imageToDataURL;
 let Status = StatusModule.Status;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+let subscription = undefined;
+let actionMode = "bool_topic";
+let value = false;
+
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let typedict = {};
-
-//persistent loading, so we don't re-fetch on every update
+// Persistent loading avoids re-fetching on every update.
 let icons = {};
 icons["true"] = await imageToDataURL("assets/button_true.svg");
 icons["false"] = await imageToDataURL("assets/button_false.svg");
 icons["default"] = await imageToDataURL("assets/button.svg");
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const icondiv = document.getElementById("{uniqueID}_icon");
 const icon = icondiv.getElementsByTagName('img')[0];
 const icontext = icondiv.getElementsByTagName('p')[0];
 const namebox = document.getElementById("{uniqueID}_name");
+const actionSelector = document.getElementById("{uniqueID}_action");
+const endpointContainer = document.getElementById("{uniqueID}_endpoint_configuration");
 
-//dataset text for in-folder text display
+const ACTIONS = Object.freeze({
+	bool_topic: Object.freeze({ endpointType: "topic", guiMessageType: guiMessages.GUI_MESSAGE_TYPE.BOOL, tracksValue: true }),
+	empty_topic: Object.freeze({ endpointType: "topic", guiMessageType: guiMessages.GUI_MESSAGE_TYPE.EMPTY, tracksValue: false }),
+	empty_service: Object.freeze({ endpointType: "service", guiMessageType: guiMessages.GUI_MESSAGE_TYPE.EMPTY, tracksValue: false }),
+	trigger_service: Object.freeze({ endpointType: "service", guiMessageType: guiMessages.GUI_MESSAGE_TYPE.TRIGGER, tracksValue: false }),
+	setbool_service: Object.freeze({ endpointType: "service", guiMessageType: guiMessages.GUI_MESSAGE_TYPE.BOOL, tracksValue: true }),
+});
+
+function action() {
+	return ACTIONS[actionMode] || ACTIONS.bool_topic;
+}
+
+// Dataset text is used for in-folder labels.
 function setLabel(string){
 	icontext.textContent = string;
 	icon.alt = string;
@@ -40,219 +61,156 @@ namebox.addEventListener('input', function() {
 	saveSettings();
 });
 
-//Settings
+actionSelector.addEventListener('change', () => {
+	actionMode = actionSelector.value;
+	endpointConfiguration = null;
+	value = false;
+	disconnect();
+	updateIcon();
+	saveSettings();
+	renderEndpointConfiguration();
+});
+
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
-	typedict = loaded_data.typedict ?? {};
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
+	actionMode = ACTIONS[loaded_data.action_mode] ? loaded_data.action_mode : "bool_topic";
 
-	namebox.value = loaded_data.text;
+	namebox.value = loaded_data.text ?? "Text";
 	setLabel(namebox.value);
 }else{
 	saveSettings();
 }
+actionSelector.value = actionMode;
 
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
+		action_mode: actionMode,
 		text: namebox.value,
-		typedict: typedict
 	}
 	settings.save();
 }
 
-//Messaging
-function sendMessage(){
-
-	icondiv.classList.add("button-press-effect");
-
-	setTimeout(() => {
-		icondiv.classList.remove("button-press-effect");
-	}, 200);
-
-	if(typedict[topic] == "std_msgs/msg/Bool" || typedict[topic] == "std_msgs/msg/Empty"){
-		const publisher = new ROSLIB.Topic({
-			ros: rosbridge.ros,
-			name: topic,
-			messageType: typedict[topic],
-			throttle_rate: 33
-		});
-
-		if(typedict[topic] == "std_msgs/msg/Bool"){
-			publisher.publish(new ROSLIB.Message({
-				data: !value,
-			}));
-		}else{
-			publisher.publish(new ROSLIB.Message({}));
-		}
-		publisher.unadvertise();
-	}
-	else if(typedict[topic] == "std_srvs/srv/Empty"){
-		const service = new ROSLIB.Service({
-			ros: rosbridge.ros,
-			name: topic,
-			serviceType: "std_srvs/srv/Empty"
-		});
-		const request = new ROSLIB.ServiceRequest({});
-		service.callService(request, (result) => {});
-	}
-	else if(typedict[topic] == "std_srvs/srv/Trigger"){
-		const service = new ROSLIB.Service({
-			ros: rosbridge.ros,
-			name: topic,
-			serviceType: "std_srvs/srv/Trigger"
-		});
-		const request = new ROSLIB.ServiceRequest({});
-		service.callService(request, (result) => {
-			if(result.success){
-				status.setOK(result.message);
-			}else{
-				status.setError(result.message);
-			}
-			
-			//flash result state
-			icon.src = icons[result.success];
-			setTimeout(()=>{
-				icon.src = icons["default"];
-			}, 500);
-		});
-	}
-	else if(typedict[topic] == "std_srvs/srv/SetBool"){
-		const service = new ROSLIB.Service({
-			ros: rosbridge.ros,
-			name: topic,
-			serviceType: "std_srvs/srv/SetBool"
-		});
-		const request = new ROSLIB.ServiceRequest({
-			data: !value  // toggle the value
-		});
-		service.callService(request, (result) => {
-			if(result.success){
-				value = !value;
-				icon.src = icons[value];
-				status.setOK(result.message);
-			}else{
-				status.setError(result.message);
-			}
-		});
-	}
-
+function activeEndpointConfiguration() {
+	return endpointConfigurationEditor ? endpointConfigurationEditor.activeConfiguration : null;
 }
 
-let value = false;
-let listener = undefined;
-let booltopic = undefined;
+function disconnect() {
+	if (subscription !== undefined) {
+		subscription.unsubscribe();
+		subscription = undefined;
+	}
+}
+
+function updateIcon() {
+	icon.src = action().tracksValue ? icons[value] : icons["default"];
+}
 
 function connect(){
+	disconnect();
 
-	if(topic == ""){
-		status.setError("Empty topic/service.");
+	const configuration = activeEndpointConfiguration();
+	if (!configuration || !configuration.endpoint) {
+		updateIcon();
+		status.setError("Select a configured endpoint.");
 		return;
 	}
 
-	if(booltopic !== undefined){
-		booltopic.unsubscribe(listener);
-	}
-
-	if(typedict[topic] == "std_msgs/msg/Bool"){
-
+	if (actionMode === "bool_topic") {
 		status.setWarn("No data received.");
-
-		booltopic = new ROSLIB.Topic({
-			ros : rosbridge.ros,
-			name : topic,
-			messageType : "std_msgs/msg/Bool",
-			throttle_rate: 33,
-			queue_length: 1
-		});	
-		
-		listener = booltopic.subscribe((msg) => {
-			value = msg.data;
-			icon.src = icons[value];
+		subscription = endpointService.subscribe(configuration, action().guiMessageType, (message) => {
+			value = message.value;
+			updateIcon();
 			status.setOK();
 		});
-
-		icon.src = icons["false"];
 	}
-	else if(typedict[topic] == "std_srvs/srv/SetBool"){
-		icon.src = icons["false"];
-	}	
-	else{
-		icon.src = icons["default"];
+	else if (actionMode === "setbool_service") {
+		value = false;
+		updateIcon();
+	}
+	else {
+		updateIcon();
 	}
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let booltopics = await rosbridge.get_topics("std_msgs/msg/Bool");
-	let emptypubs = await rosbridge.get_topics("std_msgs/msg/Empty");
-	let emptysrvs = await rosbridge.get_services("std_srvs/srv/Empty");
-	let triggersrvs = await rosbridge.get_services("std_srvs/srv/Trigger");
-	let setboolsrvs = await rosbridge.get_services("std_srvs/srv/SetBool");
+async function sendMessage(){
+	icondiv.classList.add("button-press-effect");
+	setTimeout(() => {
+		icondiv.classList.remove("button-press-effect");
+	}, 200);
 
-	let topiclist = "";
+	const configuration = activeEndpointConfiguration();
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured endpoint.");
+		return;
+	}
 
-	booltopics.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (msgs/Bool)</option>";
-		typedict[element] = "std_msgs/msg/Bool";
-	});
-
-	emptypubs.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (msgs/Empty)</option>";
-		typedict[element] = "std_msgs/msg/Empty";
-	});
-
-	emptysrvs.forEach(element => {
-		if(!element.includes("/vizanti/")){
-			topiclist += "<option value='"+element+"'>"+element+" (srvs/Empty)</option>";
-			typedict[element] = "std_srvs/srv/Empty";
+	try {
+		if (actionMode === "bool_topic") {
+			endpointService.publish(configuration, guiMessages.createBool(!value));
+			return;
 		}
-	});
-
-	triggersrvs.forEach(element => {
-		if(!element.includes("/vizanti/")){
-			topiclist += "<option value='"+element+"'>"+element+" (srvs/Trigger)</option>";
-			typedict[element] = "std_srvs/srv/Trigger";
+		if (actionMode === "empty_topic") {
+			endpointService.publish(configuration, guiMessages.createEmpty());
+			return;
 		}
-	});
-
-	setboolsrvs.forEach(element => {
-		if(!element.includes("/vizanti/")){
-			topiclist += "<option value='"+element+"'>"+element+" (srvs/SetBool)</option>";
-			typedict[element] = "std_srvs/srv/SetBool";
+		if (actionMode === "empty_service") {
+			await endpointService.call(configuration, guiMessages.createEmpty());
+			status.setOK();
+			return;
 		}
-	});
-
-	selectionbox.innerHTML = topiclist;
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(typedict.hasOwnProperty(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>";
-			selectionbox.innerHTML = topiclist;
-			selectionbox.value = topic;
+		if (actionMode === "trigger_service") {
+			const result = await endpointService.call(configuration, guiMessages.createTrigger());
+			if (result.success) {
+				status.setOK(result.message);
+			} else {
+				status.setError(result.message);
+			}
+			icon.src = icons[result.success];
+			setTimeout(() => { updateIcon(); }, 500);
+			return;
 		}
+		if (actionMode === "setbool_service") {
+			const result = await endpointService.call(configuration, guiMessages.createBool(!value));
+			if (result.success) {
+				value = !value;
+				updateIcon();
+				status.setOK(result.message);
+			} else {
+				status.setError(result.message);
+			}
+		}
+	} catch (error) {
+		status.setError(error.message);
 	}
 }
 
+function renderEndpointConfiguration() {
+	endpointContainer.innerHTML = "";
+	const configurationAction = action();
+	endpointConfigurationEditor = createEndpointConfiguration({
+		container: endpointContainer,
+		endpointService,
+		guiMessageType: configurationAction.guiMessageType,
+		endpointType: configurationAction.endpointType,
+		configuration: endpointConfiguration,
+		getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+		onChange(configuration) {
+			endpointConfiguration = configuration;
+			saveSettings();
+			connect();
+		},
+	});
+	endpointConfigurationEditor.refresh();
+}
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	icon.src = icons["default"];
-	connect();
-});
+renderEndpointConfiguration();
+updateIcon();
 
-selectionbox.addEventListener("click", connect);
-icon.addEventListener("click", loadTopics);
-
-loadTopics();
-connect();
-
-// Long press modal open stuff
+// Long press modal open handling.
 let longPressTimer;
 let isLongPress = false;
 
@@ -280,8 +238,7 @@ function startLongPress(event) {
 	isLongPress = false;
 	longPressTimer = setTimeout(() => {
 		isLongPress = true;
-		loadTopics();
-		connect();
+		endpointConfigurationEditor.refresh();
 		openModal("{uniqueID}_modal");
 	}, 500);
 }

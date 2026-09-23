@@ -4,12 +4,9 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
-		<label for="{uniqueID}_topic">Topic:</label>
-		<select id="{uniqueID}_topic" name="topic">
-			<!-- add topics here-->
-		</select>
+		<div id="{uniqueID}_endpoint_configuration"></div>
 
-		<p>Render visualization_msgs/MarkerArray batches of visualization_msgs/Marker messages.</p>
+		<p>Render batches of visualization markers from the configured endpoint.</p>
 
 		<p class="comment">Most marker types are supported, except POINTS and MESH_RESOURCE. Mileage may vary with pitch and roll rotations.</p>
 
@@ -28,7 +25,7 @@
 
 		<div class="spacer"></div>
 
-		<label for="{uniqueID}_throttle">Socket throttle (ms):</label>
+		<label for="{uniqueID}_throttle">Delivery throttle (ms):</label>
 		<input type="number" value="100" step="1" min="0" max="10000" id="{uniqueID}_throttle">
 
 

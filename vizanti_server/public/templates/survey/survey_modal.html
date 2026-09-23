@@ -4,21 +4,7 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
-		<label for="{uniqueID}_use_selected_vehicle">Use vehicle target:</label>
-		<input type="checkbox" id="{uniqueID}_use_selected_vehicle">
-
-		<div id="{uniqueID}_topic_target">
-			<label for="{uniqueID}_topic">Topic:</label>
-			<select id="{uniqueID}_topic" name="topic">
-				<option value="/waypoints">/waypoints</option>
-			</select>
-		</div>
-
-		<div id="{uniqueID}_vehicle_target" hidden>
-			<label for="{uniqueID}_selected_vehicle">Vehicle:</label>
-			<select id="{uniqueID}_selected_vehicle" disabled></select>
-			<p class="comment">Uses the chosen robot's Path Topic and namespace.</p>
-		</div>
+		<div id="{uniqueID}_endpoint_configuration"></div>
 
 		<div class="spacer"></div>
 
@@ -34,7 +20,7 @@
 			<option value="base_link">base_link</option>
 		</select>
 
-		<p style="color: #b4b4b4;">Defines a survey polygon and generates a lawnmower coverage path inside it, published as a nav_msgs/Path or geometry_msgs/PoseArray.</p>
+		<p style="color: #b4b4b4;">Defines a survey polygon and generates a lawnmower coverage path inside it, published as a Path endpoint.</p>
 
 		<hr class="dark_hr"/>
 

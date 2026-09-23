@@ -4,17 +4,30 @@
 		<p id="{uniqueID}_status" class="status">Status: Ok.</p>
 		<hr class="dark_hr"/>
 
+		<label for="{uniqueID}_configure_goto">Use manual fix:</label>
+		<input type="checkbox" id="{uniqueID}_configure_goto">
 
-		<label for="{uniqueID}_fixed_point">Fixed Point:</label>
-		<div>
-			<input type="text" id="{uniqueID}_fixed_point" name="fixed_point" placeholder="frame_id,latitude,longitude,altitude" value="map,0.0,0.0,0.0">
-			<button id="{uniqueID}_set_fixed_point" class="export_button">Set</button>
+		<div id="{uniqueID}_manual_fix_section" style="display: none;">
+			<label for="{uniqueID}_fixed_point">Fixed Point:</label>
+			<div>
+				<input type="text" id="{uniqueID}_fixed_point" name="fixed_point" placeholder="frame_id,latitude,longitude,altitude" value="map,0.0,0.0,0.0">
+				<button id="{uniqueID}_set_fixed_point" class="export_button">Set</button>
+			</div>
 		</div>
 
-		<label for="{uniqueID}_topic">OR Select Topic:</label>
-		<select id="{uniqueID}_topic" name="topic">
-			<!-- add topics here-->
-		</select>
+		<div id="{uniqueID}_navsatfix_input_section">
+			<h4>NavSatFix Input Configuration</h4>
+			<div id="{uniqueID}_endpoint_configuration"></div>
+		</div>
+
+		<div id="{uniqueID}_goto_configuration_section">
+			<label for="{uniqueID}_publish_pose_stamped">Publish as PoseStamped:</label>
+			<input type="checkbox" id="{uniqueID}_publish_pose_stamped">
+			<p class="comment">PoseStamped coordinates are expressed in the active map frame.</p>
+			<h4 id="{uniqueID}_goto_endpoint_heading">NavSatFix Output Configuration</h4>
+			<div id="{uniqueID}_goto_navsatfix_endpoint_configuration"></div>
+			<div id="{uniqueID}_goto_pose_endpoint_configuration"></div>
+		</div>
 
 
 		<div class="live_data_display">
@@ -26,7 +39,7 @@
 		</div>
 
 
-		<p>Renders a tile map around a point specified by a sensor_msgs/NavSatFix and its header frame.</p>
+		<p>Renders a tile map around a point specified by a NavSatFix endpoint or manual fix. The Go To Point action publishes either NavSatFix or PoseStamped to its configured output endpoint.</p>
 
 		<p class="comment">Uses an ENU local tangent plane as specified by REP 103. The tiles are reprojected to match, which maintains alignment between geodetic coordinates and metric X,Y positions (it's basically a perpendicular globe at the given location). As the tangent plane increasingly diverges from the terrain with distance, Z offsets become larger and straight-line distances less useful. For best results, place the ENU origin near the operating area.</p>
 

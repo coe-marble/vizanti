@@ -1,30 +1,30 @@
 let viewModule = await import(`${base_url}/js/modules/view.js`);
 let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
 let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
 let view = viewModule.view;
 let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 let tf = endpointService.getTf();
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let Status = StatusModule.Status;
 
-let topic = getTopic("{uniqueID}");
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.PATH;
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
 
-let typedict = {};
 let fixed_frame = tf.fixed_frame;
 let base_link_frame = find_base_frame();
 let seq = 0;
-let path_publisher = undefined;
-let pathPublisherTopic = undefined;
-let pathPublisherType = undefined;
 let mode = "IDLE";
 let shift_pressed = false;
 
@@ -57,11 +57,6 @@ const angleBox = document.getElementById("{uniqueID}_angle");
 const turnaroundBox = document.getElementById("{uniqueID}_turnaround");
 const crosshatchCheckbox = document.getElementById("{uniqueID}_crosshatch");
 const directTransitCheckbox = document.getElementById("{uniqueID}_directtransit");
-const useSelectedVehicleCheckbox = document.getElementById('{uniqueID}_use_selected_vehicle');
-const selectedVehicleSelector = document.getElementById('{uniqueID}_selected_vehicle');
-const topicTarget = document.getElementById('{uniqueID}_topic_target');
-const vehicleTarget = document.getElementById('{uniqueID}_vehicle_target');
-let selectedVehicleId = "";
 
 const zSetButton = document.getElementById("{uniqueID}_z_set");
 const deleteButton = document.getElementById("{uniqueID}_delete");
@@ -92,7 +87,7 @@ deleteButton.addEventListener('click', async ()=>{
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration || null;
 	polygon = loaded_data.polygon ?? [];
 	start_marker = loaded_data.start_marker ?? null;
 	end_marker = loaded_data.end_marker ?? null;
@@ -104,11 +99,6 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	turnaroundBox.value = loaded_data.turnaround ?? 1.0;
 	crosshatchCheckbox.checked = loaded_data.crosshatch ?? false;
 	directTransitCheckbox.checked = loaded_data.direct_transit ?? false;
-	useSelectedVehicleCheckbox.checked = loaded_data.use_selected_vehicle ?? false;
-	selectedVehicleId = loaded_data.selected_vehicle_id ?? "";
-
-	if(loaded_data.topic_type != undefined)
-		typedict[topic] = loaded_data.topic_type;
 
 	for (let i = 0; i < polygon.length; i++) {
 		if (polygon[i].z == null || polygon[i].z == undefined){
@@ -121,16 +111,9 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	saveSettings();
 }
 
-if(topic == ""){
-	topic = "/move_base_simple/waypoints";
-	status.setWarn("No topic found, defaulting to /move_base_simple/waypoints");
-	saveSettings();
-}
-
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
-		topic_type: typedict[topic],
+		endpoint_configuration: endpointConfiguration,
 		fixed_frame: fixed_frame,
 		base_link_frame: base_link_frame,
 		polygon: polygon,
@@ -141,62 +124,18 @@ function saveSettings(){
 		turnaround: turnaroundBox.value,
 		crosshatch: crosshatchCheckbox.checked,
 		direct_transit: directTransitCheckbox.checked,
-		use_selected_vehicle: useSelectedVehicleCheckbox.checked,
-		selected_vehicle_id: selectedVehicleId,
 	}
 	settings.save();
 }
 
-function refreshVehicleSelector() {
-	const vehicles = vehicleSelectionModule.getRegisteredVehicles();
-	selectedVehicleSelector.innerHTML = "<option value=''>Select vehicle</option>";
-	vehicles.forEach((vehicle) => {
-		const option = document.createElement("option");
-		option.value = vehicle.id;
-		option.textContent = `${vehicle.name} (${vehicle.namespace || "/"})`;
-		selectedVehicleSelector.appendChild(option);
-	});
-	selectedVehicleSelector.value = selectedVehicleId;
-}
-
-function updateVehicleTargetState() {
-	const useVehicleTarget = useSelectedVehicleCheckbox.checked;
-	topicTarget.hidden = useVehicleTarget;
-	vehicleTarget.hidden = !useVehicleTarget;
-	selectedVehicleSelector.disabled = !useVehicleTarget;
-}
-
-useSelectedVehicleCheckbox.addEventListener('change', () => {
-	updateVehicleTargetState();
-	saveSettings();
-});
-selectedVehicleSelector.addEventListener('change', () => {
-	selectedVehicleId = selectedVehicleSelector.value;
-	saveSettings();
-});
-window.addEventListener("vehicle_registry_changed", refreshVehicleSelector);
-refreshVehicleSelector();
-updateVehicleTargetState();
-
 function getPublishTopic() {
-	if (!useSelectedVehicleCheckbox.checked) {
-		return topic;
-	}
-
-	const selectedVehicle = vehicleSelectionModule.getRegisteredVehicles()
-		.find((vehicle) => vehicle.id === selectedVehicleId);
-	const configuredTopic = selectedVehicle?.pathTopic?.trim();
-	if (!selectedVehicle || !configuredTopic) {
-		status.setError("Select a vehicle with a Path Topic.");
+	const configuration = endpointConfigurationEditor
+		? endpointConfigurationEditor.activeConfiguration : null;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("No path endpoint configured.");
 		return null;
 	}
-
-	if (configuredTopic.startsWith("/")) {
-		return configuredTopic;
-	}
-
-	const namespace = selectedVehicle.namespace.replace(/^\/+|\/+$/g, "");
-	return namespace ? `/${namespace}/${configuredTopic}` : `/${configuredTopic}`;
+	return configuration;
 }
 
 // Survey geometry
@@ -446,8 +385,8 @@ function update(){
 // Message sending
 
 async function sendMessage(pointlist){
-	const publishTopic = getPublishTopic();
-	if (!publishTopic) {
+	const configuration = getPublishTopic();
+	if (!configuration) {
 		return;
 	}
 
@@ -464,31 +403,11 @@ async function sendMessage(pointlist){
 	}
 
 	function getPoseStamped(timeStamp, x, y, z, quat){
-		return new ROSLIB.Message({
-			header: {
-				stamp: timeStamp,
-				frame_id: fixed_frame
-			},
-			pose: {
-				position: {
-					x: x,
-					y: y,
-					z: z
-				},
-				orientation: quat
-			}
-		});
+		return { frameId: fixed_frame, stamp: timeStamp, position: { x, y, z }, orientation: quat };
 	}
 
 	function getPose(x, y, z, quat){
-		return new ROSLIB.Message({
-			position: {
-				x: x,
-				y: y,
-				z: z
-			},
-			orientation: quat
-		});
+		return { frameId: fixed_frame, stamp: getStamp(), position: { x, y, z }, orientation: quat };
 	}
 
 
@@ -528,37 +447,11 @@ async function sendMessage(pointlist){
 		}
 	}
 	
-	const messageType = 'nav_msgs/msg/Path';
-	if (path_publisher !== undefined && (
-		pathPublisherTopic !== publishTopic || pathPublisherType !== messageType
-	)) {
-		path_publisher.unadvertise();
-		path_publisher = undefined;
-		pathPublisherTopic = undefined;
-		pathPublisherType = undefined;
-		await new Promise((resolve) => setTimeout(resolve, 100));
-	}
-
-	if (path_publisher === undefined) {
-		path_publisher = new ROSLIB.Topic({
-			ros: rosbridge.ros,
-			name: publishTopic,
-			messageType: messageType,
-			latched: true,
-		});
-		pathPublisherTopic = publishTopic;
-		pathPublisherType = messageType;
-	}
-
-	const pathMessage = new ROSLIB.Message({
-		header: {
-			stamp: timeStamp,
-			frame_id: fixed_frame
-		},
-		poses: poseList
-	});
-
-	path_publisher.publish(pathMessage);
+	endpointService.publish(configuration, guiMessages.createPath({
+		frameId: fixed_frame,
+		stamp: timeStamp,
+		poses: poseList,
+	}));
 	status.setOK();
 
 	setMode("IDLE");
@@ -1088,16 +981,9 @@ function handleKeyUp(event) {
 window.addEventListener("keydown", handleKeyDown);
 window.addEventListener("keyup", handleKeyUp);
 
-// Topics
-const selectionbox = document.getElementById("{uniqueID}_topic");
+// Frames
 const fixedFrameBox = document.getElementById("{uniqueID}_fixed_frame");
 const baseLinkFrameBox = document.getElementById("{uniqueID}_base_link_frame");
-
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	saveSettings();
-	status.setOK();
-});
 
 fixedFrameBox.addEventListener("change", (event) => {
 	fixed_frame = fixedFrameBox.value;
@@ -1134,28 +1020,7 @@ function find_base_frame(){
 	return "base_link";
 }
 
-async function loadTopics(){
-	const result_path = await rosbridge.get_topics("nav_msgs/msg/Path");
-
-	let topiclist = "";
-	result_path.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+" (Path)</option>";
-		typedict[element] = "nav_msgs/msgs/Path";
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result_path.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
-	}
-
+function refreshFrames(){
 	let framelist = "";
 	for (const key of tf.frame_list.values()) {
 		framelist += "<option value='"+key+"'>"+key+"</option>"
@@ -1181,7 +1046,20 @@ async function loadTopics(){
 	}
 }
 
-loadTopics();
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+	},
+});
+endpointConfigurationEditor.refresh();
+refreshFrames();
 
 //dropdown stuff
 
@@ -1257,7 +1135,7 @@ drop_z.addEventListener("click", (event) => {
 });
 
 drop_config.addEventListener("click", (event) => {
-	loadTopics();
+	refreshFrames();
 	openModal("{uniqueID}_modal");
 	dropdown_visibility(false);
 });

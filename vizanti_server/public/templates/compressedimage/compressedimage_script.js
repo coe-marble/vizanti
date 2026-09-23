@@ -1,12 +1,17 @@
-let rosbridgeModule = await import(`${base_url}/js/modules/rosbridge.js`);
 let persistentModule = await import(`${base_url}/js/modules/persistent.js`);
 let utilModule = await import(`${base_url}/js/modules/util.js`);
 let StatusModule = await import(`${base_url}/js/modules/status.js`);
+let endpointServiceModule = await import(`${base_url}/js/modules/endpoint_service.js`);
+let endpointEditorModule = await import(`${base_url}/js/modules/endpoint_configuration_editor.js`);
+let guiMessagesModule = await import(`${base_url}/js/modules/gui_messages.js`);
+let vehicleSelectionModule = await import(`${base_url}/js/modules/vehicle_selection.js`);
 
-let rosbridge = rosbridgeModule.rosbridge;
 let settings = persistentModule.settings;
 let imageToDataURL = utilModule.imageToDataURL;
 let Status = StatusModule.Status;
+let endpointService = endpointServiceModule.endpointService;
+let createEndpointConfiguration = endpointEditorModule.createEndpointConfiguration;
+let guiMessages = guiMessagesModule;
 
 let img_offset_x = "-999";
 let img_offset_y = "-999";
@@ -16,21 +21,22 @@ let last_natural_height = 250;
 const clamp = (num, min, max) => Math.min(Math.max(num, min), max);
 const vwToVh = vw => (vw * window.innerWidth) / window.innerHeight;
 
-let topic = getTopic("{uniqueID}");
 let status = new Status(
 	document.getElementById("{uniqueID}_icon"),
 	document.getElementById("{uniqueID}_status")
 );
+
+const endpointMessageType = guiMessages.GUI_MESSAGE_TYPE.IMAGE;
+let endpointConfiguration = null;
+let endpointConfigurationEditor;
 
 //persistent loading, so we don't re-fetch on every update
 let stock_images = {};
 stock_images["loading"] = await imageToDataURL("assets/img_loading.png");
 stock_images["error"] = await imageToDataURL("assets/img_error.png");
 
-let image_topic = undefined;
-let listener = undefined;
+let subscription = undefined;
 
-const selectionbox = document.getElementById("{uniqueID}_topic");
 const rotationbox = document.getElementById("{uniqueID}_rotation");
 
 const icon = document.getElementById("{uniqueID}_icon").getElementsByTagName('img')[0];
@@ -51,6 +57,35 @@ widthSlider.addEventListener('input', () =>  {
 	saveSettings();
 });
 
+const resizePolicy = document.getElementById('{uniqueID}_resize_policy');
+const responsiveWidthControls = document.getElementById('{uniqueID}_responsive_width_controls');
+const customSizeControls = document.getElementById('{uniqueID}_custom_size_controls');
+const customWidth = document.getElementById('{uniqueID}_custom_width');
+const customHeight = document.getElementById('{uniqueID}_custom_height');
+
+function validCustomSize(value, fallback) {
+	const parsed = Number.parseInt(value, 10);
+	return Number.isInteger(parsed) ? clamp(parsed, 1, 4096) : fallback;
+}
+
+function updateResizeControls() {
+	const responsive = resizePolicy.value === "responsive";
+	responsiveWidthControls.hidden = !responsive;
+	customSizeControls.hidden = responsive;
+}
+
+resizePolicy.addEventListener('change', () => {
+	updateResizeControls();
+	saveSettings();
+});
+
+for (const control of [customWidth, customHeight]) {
+	control.addEventListener('input', () => {
+		control.value = validCustomSize(control.value, 1);
+		saveSettings();
+	});
+}
+
 const text_resolution = document.getElementById("{uniqueID}_resolution");
 const text_datasize = document.getElementById("{uniqueID}_datasize");
 const text_rate = document.getElementById("{uniqueID}_rate");
@@ -59,18 +94,8 @@ const text_compression = document.getElementById("{uniqueID}_compression");
 const text_type = document.getElementById("{uniqueID}_type");
 const text_frame = document.getElementById("{uniqueID}_frame");
 
-const COMPRESSION_TYPES = ["jpeg", "jpg", "png", "tiff", "webp", "rvl"];
-
 let arrival_times = [];
 let arrival_bytes = [];
-
-function parseFormat(format){
-	const lower = (format ?? "").toLowerCase();
-	const encoding = lower.split(";")[0].trim();
-	const compression = COMPRESSION_TYPES.find(type => lower.includes(type)) ?? "unknown";
-	const is_depth = lower.includes("compresseddepth") || encoding.startsWith("16uc1") || encoding.startsWith("32fc1") || encoding.startsWith("16uc") && lower.includes("depth");
-	return {encoding, compression, is_depth};
-}
 
 function base64ByteLength(data){
 	if(data === undefined || data.length == 0)
@@ -108,9 +133,8 @@ function resetLiveData(){
 	text_frame.innerText = "Frame: ?";
 }
 
-function updateLiveData(msg, base64Data){
-	const info = parseFormat(msg.format);
-	const bytes = base64ByteLength(base64Data);
+function updateLiveData(message){
+	const bytes = base64ByteLength(message.base64Data);
 	
 	arrival_times.push(performance.now());
 	arrival_bytes.push(bytes);
@@ -121,9 +145,9 @@ function updateLiveData(msg, base64Data){
 	}
 
 	text_datasize.innerText = "Data size: "+formatBytes(bytes);
-	text_compression.innerText = "Compression: "+info.compression.toUpperCase();
-	text_type.innerText = "Type: "+(info.is_depth ? "Depth" : (info.encoding.startsWith("mono") || info.encoding == "8uc1" ? "Grayscale" : "Color"))+(info.encoding == "" ? "" : " ("+info.encoding+")");
-	text_frame.innerText = "Frame: "+(msg.header?.frame_id == "" ? "(empty)" : msg.header?.frame_id ?? "?");
+	text_compression.innerText = "Compression: "+message.compression.toUpperCase();
+	text_type.innerText = "Type: "+(message.isDepth ? "Depth" : (message.encoding.startsWith("mono") || message.encoding == "8uc1" ? "Grayscale" : "Color"))+(message.encoding == "" ? "" : " ("+message.encoding+")");
+	text_frame.innerText = "Frame: "+(message.frameId == "" ? "(empty)" : message.frameId);
 
 	if(arrival_times.length > 1){
 		const seconds = (arrival_times[arrival_times.length - 1] - arrival_times[0]) / 1000;
@@ -148,7 +172,8 @@ rotationbox.addEventListener("change", (event) => {
 
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	topic = loaded_data.topic;
+	endpointConfiguration = loaded_data.endpoint_configuration
+		?? legacyEndpointConfiguration(loaded_data.topic);
 
 	img_offset_x = loaded_data.img_offset_x;
 	img_offset_y = loaded_data.img_offset_y;
@@ -162,6 +187,10 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	widthSlider.value = loaded_data.width;
 	widthValue.innerText = loaded_data.width;
 	rotationbox.value = loaded_data.rotation;
+	resizePolicy.value = ["responsive", "contain", "cover", "stretch"].includes(loaded_data.resize_policy)
+		? loaded_data.resize_policy : "responsive";
+	customWidth.value = validCustomSize(loaded_data.custom_width, 400);
+	customHeight.value = validCustomSize(loaded_data.custom_height, 300);
 
 	last_natural_width = loaded_data.last_natural_width ?? 400;
 	last_natural_height = loaded_data.last_natural_height ?? 300;
@@ -173,12 +202,17 @@ if(settings.hasOwnProperty("{uniqueID}")){
 	saveSettings();
 }
 
+updateResizeControls();
+
 function saveSettings(){
 	settings["{uniqueID}"] = {
-		topic: topic,
+		endpoint_configuration: endpointConfiguration,
 		opacity: opacitySlider.value,
 		throttle: throttle.value,
 		width: widthSlider.value,
+		resize_policy: resizePolicy.value,
+		custom_width: validCustomSize(customWidth.value, 400),
+		custom_height: validCustomSize(customHeight.value, 300),
 		img_offset_x: img_offset_x,
 		img_offset_y: img_offset_y,
 		rotation: rotationbox.value,
@@ -192,22 +226,26 @@ function saveSettings(){
 	displayImageOffset(img_offset_x, img_offset_y);
 }
 
-let isRWSFormat = null;
-function getBase64ImageData(msg) {
-	if (isRWSFormat === null) {
-		isRWSFormat = typeof msg.data !== 'string';
-		console.log(`Detected message format: ${isRWSFormat ? 'RWS' : 'rosbridge'}`);
-	}
-	
-	if (isRWSFormat) {
-		const msg_data = new Uint8Array(msg.data);
-		return msg_data.toBase64();
-	} else {
-		return msg.data;
-	}
+function legacyEndpointConfiguration(topic) {
+	const endpointId = typeof topic === "string" ? topic.trim() : "";
+	return {
+		mode: "manual",
+		robotModelId: "",
+		manualAdapterConfiguration: {
+			adapterId: "ros2",
+			values: { namespace: "", tfFrame: "base_link" },
+		},
+		endpointConfiguration: {
+			endpointValues: {},
+			outputMessageId: "",
+			endpointId,
+			manualEndpointId: endpointId,
+			endpoint: null,
+			endpointMode: "manual",
+		},
+	};
 }
 
-//Topic
 async function getImage(src) {
     return new Promise((resolve, reject) => {
         let img = new Image();
@@ -224,41 +262,23 @@ function connect(){
 	canvas.src = stock_images["loading"];
 	displayImageOffset(img_offset_x, img_offset_y);
 
-	if(topic == ""){
-		status.setError("Empty topic.");
-		return;
+	if(subscription !== undefined){
+		subscription.unsubscribe();
+		subscription = undefined;
 	}
 
-	if(image_topic !== undefined){
-		image_topic.unsubscribe(listener);
+	const configuration = getEndpointConfiguration();
+	if (!configuration) {
+		return;
 	}
 
 	status.setWarn("No data received.");
 
-	image_topic = new ROSLIB.Topic({
-		ros : rosbridge.ros,
-		name : topic,
-		messageType : 'sensor_msgs/msg/CompressedImage',
-		throttle_rate: parseInt(throttle.value),
-		queue_length: 1
-	});
-	
 	let received = false;
-	listener = image_topic.subscribe(async (msg) => {  
+	subscription = endpointService.subscribe(configuration, endpointMessageType, (message) => {
+		const src = `data:${message.mimeType};base64,${message.base64Data}`;
 
-		const mime = msg.format.includes("png") ? "image/png" : "image/jpeg";
-		let base64Data = getBase64ImageData(msg);
-
-		if (mime == "image/png") {
-			const pngIndex = base64Data.indexOf("iVBORw0KGgo");
-			if (pngIndex !== -1) {
-				base64Data =  base64Data.substring(pngIndex);
-			}
-		}
-
-		const src = `data:${mime};base64,${base64Data}`;
-
-		updateLiveData(msg, base64Data);
+		updateLiveData(message);
 
 		getImage(src)
 			.then((img) => {
@@ -269,7 +289,7 @@ function connect(){
 			        if(!received){
 
 						//lightweight hackery to show depth in a more usable way, we'd need to re-render it to 8bit to do it properly
-						if (msg.format && msg.format.includes("compressedDepth")) {
+						if (message.isDepth) {
 							canvas.style.filter = "brightness(600%)";
 						} else {
 							canvas.style.filter = "none";
@@ -287,45 +307,47 @@ function connect(){
 				displayImageOffset(img_offset_x, img_offset_y);
 				status.setError(e.message);
 			});
-	});
+	}, deliveryOptions());
 
 	saveSettings();
 }
 
-async function loadTopics(){
-	let result = await rosbridge.get_topics("sensor_msgs/msg/CompressedImage");
-	let topiclist = "";
-	result.forEach(element => {
-		topiclist += "<option value='"+element+"'>"+element+"</option>"
-	});
-	selectionbox.innerHTML = topiclist
-
-	if(topic == "")
-		topic = selectionbox.value;
-	else{
-		if(result.includes(topic)){
-			selectionbox.value = topic;
-		}else{
-			topiclist += "<option value='"+topic+"'>"+topic+"</option>"
-			selectionbox.innerHTML = topiclist
-			selectionbox.value = topic;
-		}
+function getEndpointConfiguration() {
+	const configuration = endpointConfigurationEditor.activeConfiguration;
+	if (!configuration || !configuration.endpoint) {
+		status.setError("Select a configured endpoint.");
+		return null;
 	}
-	connect();
+	return configuration;
 }
 
-selectionbox.addEventListener("change", (event) => {
-	topic = selectionbox.value;
-	connect();
-});
+function deliveryOptions() {
+	const throttleRate = Number.parseInt(throttle.value, 10);
+	return {
+		throttleRate: Number.isFinite(throttleRate) && throttleRate >= 0 ? throttleRate : 0,
+		queueLength: 1,
+	};
+}
 
-selectionbox.addEventListener("click", connect);
+endpointConfigurationEditor = createEndpointConfiguration({
+	container: document.getElementById("{uniqueID}_endpoint_configuration"),
+	endpointService,
+	guiMessageType: endpointMessageType,
+	endpointType: "topic",
+	configuration: endpointConfiguration,
+	getRobotModels: vehicleSelectionModule.getRegisteredVehicles,
+	onChange(configuration) {
+		endpointConfiguration = configuration;
+		saveSettings();
+		connect();
+	},
+});
 
 icon.addEventListener("click", ()=> {
-	loadTopics();
+	endpointConfigurationEditor.refresh();
 });
 
-loadTopics();
+endpointConfigurationEditor.refresh();
 
 //preview for definining position
 let preview_active = false;
@@ -345,26 +367,43 @@ function displayImageOffset(x, y){
 
 	const rotation = ((parseFloat(rotationbox.value) % 360) + 360) % 360;
 	const isSideways = (rotation === 90 || rotation === 270);
+	let visualWidth;
+	let visualHeight;
+	if (resizePolicy.value === "responsive") {
+		let imageWidth;
+		let imageHeight;
+		if (isSideways) {
+			imageHeight = parseFloat(widthSlider.value);
+			imageWidth = (imageHeight * last_natural_width) / vwToVh(last_natural_height);
+		} else {
+			imageWidth = parseFloat(widthSlider.value);
+			imageHeight = (vwToVh(imageWidth) * last_natural_height) / last_natural_width;
+		}
 
-	let img_width, img_height;
-	if(isSideways) {
-	    img_height = parseFloat(widthSlider.value);
-	    img_width = (img_height * last_natural_width) / (vwToVh(last_natural_height));
+		const imageHeightVw = imageHeight * window.innerHeight / window.innerWidth;
+		visualWidth = isSideways ? imageHeightVw : imageWidth;
+		visualHeight = isSideways ? imageWidth * window.innerWidth / window.innerHeight : imageHeight;
+		canvas.style.width = imageWidth + "vw";
+		canvas.style.height = imageHeight + "vh";
+		canvas.style.objectFit = "fill";
 	} else {
-	    img_width = parseFloat(widthSlider.value);
-	    img_height = (vwToVh(img_width) * last_natural_height) / last_natural_width;
+		const imageWidth = validCustomSize(customWidth.value, 400);
+		const imageHeight = validCustomSize(customHeight.value, 300);
+		visualWidth = (isSideways ? imageHeight : imageWidth) / window.innerWidth * 100;
+		visualHeight = (isSideways ? imageWidth : imageHeight) / window.innerHeight * 100;
+		canvas.style.width = imageWidth + "px";
+		canvas.style.height = imageHeight + "px";
+		canvas.style.objectFit = resizePolicy.value === "stretch" ? "fill" : resizePolicy.value;
+		canvas.style.objectPosition = "center";
 	}
 
-	const img_height_vw = img_height * window.innerHeight / window.innerWidth;
-	const visual_width  = isSideways ? img_height_vw : img_width;
-	const visual_height = isSideways ? img_width * window.innerWidth / window.innerHeight : img_height;
-
-	canvas.style.width  = img_width  + "vw";
-	canvas.style.height = img_height + "vh";
-
 	// Clamp position using the actual visual extents, not the pre-rotation ones
-	let offset_x = clamp(x, visual_width  / 2, 100 - visual_width  / 2);
-	let offset_y = clamp(y, visual_height / 2, 100 - visual_height / 2);
+	const minOffsetX = Math.min(visualWidth / 2, 50);
+	const maxOffsetX = Math.max(100 - visualWidth / 2, 50);
+	const minOffsetY = Math.min(visualHeight / 2, 50);
+	const maxOffsetY = Math.max(100 - visualHeight / 2, 50);
+	let offset_x = clamp(x, minOffsetX, maxOffsetX);
+	let offset_y = clamp(y, minOffsetY, maxOffsetY);
 
 	imgpreview.style.left = offset_x + "vw";
 	imgpreview.style.top  = offset_y + "vh";
@@ -408,4 +447,3 @@ imgpreview.addEventListener('touchstart', onStart);
 displayImageOffset(img_offset_x, img_offset_y);
 
 console.log("Image Widget Loaded {uniqueID}")
-
