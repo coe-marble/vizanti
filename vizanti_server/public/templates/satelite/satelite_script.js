@@ -748,12 +748,7 @@ window.handleContextMenuAction = function(event, action) {
 
 function initialize(){
 	if (useManualFix) {
-		const fixedPoint = fixedPointInput.value.trim();
-		if (fixedPointHasValidData(fixedPoint)) {
-			setFixedPointButton.click();
-		} else {
-			status.setError("Enter a manual fixed point.");
-		}
+		applyFixedPoint(false);
 	} else {
 		connect();
 	}
@@ -784,7 +779,7 @@ canvas.addEventListener("click", (event) => {
 });
 
 
-setFixedPointButton.addEventListener("click", (event) => {
+function applyFixedPoint(moveToOrigin) {
 	const input = fixedPointInput.value.trim();
 
 	if(!fixedPointHasValidData(input)){
@@ -815,8 +810,9 @@ setFixedPointButton.addEventListener("click", (event) => {
 
 	text_frame.innerText = "TF Frame: "+frame_id;
 
-	// The entered geodetic fix is the ENU origin; selecting its frame makes
-	// that origin the map's (0, 0) coordinate and tile-map origin.
+	// Restore the fixed frame that belongs to the saved datum so the map can
+	// render before TF has received a transform for that frame. Only Set
+	// recentres the GUI for a newly selected origin.
 	tf.setFixedFrame(frame_id);
 
 	const stamp = { sec: 0, nanosec: 0 };
@@ -840,15 +836,21 @@ setFixedPointButton.addEventListener("click", (event) => {
 	// with the new datum before culling or drawing any tiles.
 	updateFixData();
 
-	// A new datum changes what map (0, 0) represents. Keep the current zoom,
-	// but centre the completed map state before drawing it.
-	view.center = { x: 0, y: 0 };
-	settings.view.center = view.center;
-	settings.save();
-	view.sendUpdateEvent();
+	if (moveToOrigin) {
+		// A user-selected datum changes what map (0, 0) represents. Keep the
+		// current zoom, but centre the completed map state before drawing it.
+		view.center = { x: 0, y: 0 };
+		settings.view.center = view.center;
+		settings.save();
+		view.sendUpdateEvent();
+	}
 	scheduleDraw();
 	status.setOK();
 	saveSettings();
+}
+
+setFixedPointButton.addEventListener("click", () => {
+	applyFixedPoint(true);
 });
 
 icon.addEventListener("click", (event) => {
@@ -931,7 +933,9 @@ function resizeScreen(){
 window.addEventListener("navsat_tilecache_updated", scheduleDraw);
 window.addEventListener("tf_fixed_frame_changed", scheduleDraw);
 window.addEventListener("tf_changed", ()=>{
-	if(map_fix && map_fix.frameId != tf.fixed_frame){
+	if (useManualFix && !map_fix) {
+		applyFixedPoint(false);
+	} else if(map_fix && map_fix.frameId != tf.fixed_frame){
 		scheduleDraw();
 	}
 });
