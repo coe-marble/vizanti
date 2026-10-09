@@ -167,6 +167,13 @@ export const endpointService = Object.freeze({
 		);
 	},
 
+	publishRaw(configuration, message) {
+		const resolved = resolve(configuration);
+		return resolved.adapter.publishRaw(
+			resolved.instance, configuration.adapterValues || {}, configuration.endpoint, message,
+		);
+	},
+
 	call(configuration, request) {
 		const resolved = resolve(configuration);
 		return resolved.adapter.call(

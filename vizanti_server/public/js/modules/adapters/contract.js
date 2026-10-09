@@ -29,6 +29,8 @@
 //   protocol-neutral delivery preferences such as throttleRate and queueLength.
 // - publish(instance, configuration, endpoint, outputMessageId, guiMessage)
 //   sends one GUI message
+// - publishRaw(instance, configuration, endpoint, nativeMessage) sends one
+//   native protocol message without a GUI mapping
 // - call(instance, configuration, endpoint, guiRequest) resolves with one response
 // - runAction(instance, configuration, endpoint, goal, options) starts an
 //   adapter-owned action and returns its cancellation and result lifecycle.
@@ -54,6 +56,7 @@ export const ADAPTER_OPERATION = Object.freeze({
 	GET_TF: "getTf",
 	SUBSCRIBE: "subscribe",
 	PUBLISH: "publish",
+	PUBLISH_RAW: "publishRaw",
 	CALL: "call",
 	RUN_ACTION: "runAction",
 	CREATE_MANUAL_ENDPOINT: "createManualEndpoint",

@@ -24,6 +24,7 @@ const navigatorEndpointConfigurationContainer = document.getElementById(
 const blackboardInputsInput = document.getElementById('{uniqueID}_blackboard_inputs');
 const recordingModeInput = document.getElementById('{uniqueID}_recording_mode');
 const debugStartModeInput = document.getElementById('{uniqueID}_debug_start_mode');
+const detachedModeInput = document.getElementById('{uniqueID}_detached_mode');
 const githubUrlInput = document.getElementById('{uniqueID}_github_url');
 const githubRefInput = document.getElementById('{uniqueID}_github_ref');
 const githubSubdirectoryInput = document.getElementById('{uniqueID}_github_subdirectory');
@@ -39,6 +40,14 @@ const debugTickButton = document.getElementById('{uniqueID}_debug_tick');
 const debugUntilButton = document.getElementById('{uniqueID}_debug_until');
 const debugContinueButton = document.getElementById('{uniqueID}_debug_continue');
 const stopButton = document.getElementById('{uniqueID}_stop');
+const attachButton = document.createElement('button');
+attachButton.type = 'button';
+attachButton.className = 'btmanager-runtime-control btmanager-debug-command';
+attachButton.title = 'Attach to an active detached run';
+attachButton.textContent = 'Attach';
+attachButton.hidden = true;
+attachButton.disabled = true;
+stopButton.after(attachButton);
 
 debugUntilButton.title = 'Tick until the selected node starts';
 const createModal = document.getElementById('{uniqueID}_create_modal');
@@ -128,6 +137,7 @@ let bundledNodeCatalog = [];
 
 let rootPath = '';
 let selectedPath = '';
+let savedSelectedPath = '';
 let revision = '';
 let savedContent = '';
 let maximized = false;
@@ -142,10 +152,27 @@ let selectedRun = null;
 let runPlayback = null;
 let recordingMode = 'timeline';
 let debugStartMode = 'paused';
+let detachedMode = false;
+let attachAvailable = false;
+let attachProbeSequence = 0;
 let debugBreakpointsByFile = {};
 let selectedGraphRuntimePath = '';
 let runtimeDebugState = null;
 let runtimeBlackboardState = null;
+let runtimeBlackboardDraftBase = null;
+let runtimeBlackboardDraftText = '';
+let runtimeBlackboardEditing = false;
+const nonOverridableBlackboardKeys = new Set([
+	'node',
+	'tf_buffer',
+	'odom_smoother',
+	'server_timeout',
+	'cancel_timeout',
+	'bt_loop_duration',
+	'wait_for_service_timeout',
+	'initial_pose_received',
+	'number_recoveries',
+]);
 const runtimeNodeStates = new Map();
 const runtimeNodeStatesByPath = new Map();
 const runtimeNodePathsByUid = new Map();
@@ -201,6 +228,8 @@ let navigatorEndpointConfiguration = defaultNavigatorEndpointConfiguration();
 
 if (settings.hasOwnProperty('{uniqueID}')) {
 	rootPath = settings['{uniqueID}'].root_path ?? '';
+	savedSelectedPath = typeof settings['{uniqueID}'].selected_path === 'string'
+		? settings['{uniqueID}'].selected_path : '';
 	navigatorEndpointConfiguration =
 		settings['{uniqueID}'].navigator_endpoint_configuration
 		?? migrateNavigatorEndpointConfiguration(
@@ -212,6 +241,7 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 	) ? settings['{uniqueID}'].run_recording_mode : 'timeline';
 	debugStartMode = settings['{uniqueID}'].debug_start_mode === 'breakpoint'
 		? 'breakpoint' : 'paused';
+	detachedMode = settings['{uniqueID}'].detached_mode === true;
 	const storedBreakpoints = settings['{uniqueID}'].debug_breakpoints_by_file;
 	if (storedBreakpoints && typeof storedBreakpoints === 'object' && !Array.isArray(storedBreakpoints)) {
 		debugBreakpointsByFile = Object.fromEntries(Object.entries(storedBreakpoints)
@@ -230,14 +260,17 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 rootInput.value = rootPath;
 recordingModeInput.value = recordingMode;
 debugStartModeInput.value = debugStartMode;
+detachedModeInput.checked = detachedMode;
 
 function saveSettings() {
 	settings['{uniqueID}'] = {
 		root_path: rootPath,
+		selected_path: selectedPath || savedSelectedPath,
 		navigator_endpoint_configuration: navigatorEndpointConfiguration,
 		blackboard_inputs: blackboardInputsInput.value,
 		run_recording_mode: recordingMode,
 		debug_start_mode: debugStartMode,
+		detached_mode: detachedMode,
 		debug_breakpoints_by_file: debugBreakpointsByFile,
 		github_url: githubUrlInput.value,
 		github_ref: githubRefInput.value,
@@ -259,6 +292,10 @@ debugStartModeInput.addEventListener('change', () => {
 	debugStartMode = debugStartModeInput.value === 'breakpoint' ? 'breakpoint' : 'paused';
 	saveSettings();
 });
+detachedModeInput.addEventListener('change', () => {
+	detachedMode = detachedModeInput.checked;
+	saveSettings();
+});
 githubUrlInput.addEventListener('input', saveSettings);
 githubRefInput.addEventListener('input', saveSettings);
 githubSubdirectoryInput.addEventListener('input', saveSettings);
@@ -272,6 +309,8 @@ const navigatorEndpointConfigurationEditor = createEndpointConfiguration({
 	onChange(configuration) {
 		navigatorEndpointConfiguration = configuration;
 		saveSettings();
+		setAttachAvailability(false);
+		if (!panel.hidden) queueMicrotask(() => void probeForAttachableRuntime());
 	},
 });
 void navigatorEndpointConfigurationEditor.refresh();
@@ -365,7 +404,9 @@ function updateRuntimeControls() {
 		: null;
 	playButton.disabled = active || !selectedPath;
 	debugButton.disabled = active || !selectedPath;
-	stopButton.disabled = !activeRuntime || runtimeStarting || runtimeStopping;
+	stopButton.disabled = !activeRuntime || activeRuntime.canCancel !== true || runtimeStarting || runtimeStopping;
+	attachButton.hidden = !attachAvailable;
+	attachButton.disabled = !attachAvailable || active || runtimeStarting;
 	debugTickButton.hidden = !debugging;
 	debugUntilButton.hidden = !debugging;
 	debugContinueButton.hidden = !debugging;
@@ -529,6 +570,7 @@ function createRunRecord(mode) {
 		metadata: {
 			path: selectedPath,
 			mode,
+			detached: detachedMode,
 			debug_start_mode: mode === 'debug' ? debugStartMode : undefined,
 			breakpoint_paths: mode === 'debug' ? [...debugBreakpointsForSelectedFile()] : undefined,
 			recording_mode: recordingMode,
@@ -923,6 +965,208 @@ async function loadRuns() {
 	}
 }
 
+function isJsonObject(value) {
+	return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneJson(value) {
+	return JSON.parse(JSON.stringify(value));
+}
+
+function isOverridableBlackboardKey(key) {
+	return typeof key === 'string' && key.length > 0 && key.length <= 128 &&
+		!nonOverridableBlackboardKeys.has(key) &&
+		/^[^\s{}\[\]@]+$/.test(key);
+}
+
+function overrideableBlackboardValues(values) {
+	return Object.fromEntries(Object.entries(values)
+		.filter(([key]) => isOverridableBlackboardKey(key)));
+}
+
+function blackboardDraftPatch(base, draft) {
+	const patch = {};
+	const keys = new Set([...Object.keys(base), ...Object.keys(draft)]);
+	for (const key of [...keys].sort()) {
+		const hasBase = Object.hasOwn(base, key);
+		const hasDraft = Object.hasOwn(draft, key);
+		if (!hasDraft) {
+			patch[key] = null;
+		} else if (!hasBase || JSON.stringify(base[key]) !== JSON.stringify(draft[key])) {
+			patch[key] = draft[key];
+		}
+	}
+	return patch;
+}
+
+function parseBlackboardDraft() {
+	let draft;
+	try {
+		draft = JSON.parse(runtimeBlackboardDraftText);
+	} catch (error) {
+		return { error: `Invalid JSON: ${error.message}`, value: null, patch: null };
+	}
+	if (!isJsonObject(draft)) {
+		return { error: 'Blackboard draft must be a JSON object.', value: null, patch: null };
+	}
+	return {
+		error: '',
+		value: draft,
+		patch: blackboardDraftPatch(runtimeBlackboardDraftBase || {}, draft),
+	};
+}
+
+function appendBlackboardDiffLine(container, className, prefix, key, value) {
+	const line = document.createElement('span');
+	line.className = `btmanager-blackboard-diff-line ${className}`;
+	line.textContent = `${prefix} ${JSON.stringify({ [key]: value })}`;
+	container.appendChild(line);
+}
+
+function renderBlackboardDraftPreview(diff, message, submitButton) {
+	const parsed = parseBlackboardDraft();
+	diff.replaceChildren();
+	if (parsed.error) {
+		message.textContent = parsed.error;
+		message.className = 'btmanager-blackboard-diff-old';
+		submitButton.disabled = true;
+		return;
+	}
+
+	const entries = Object.entries(parsed.patch);
+	if (entries.length === 0) {
+		message.textContent = 'No staged changes.';
+		message.className = 'btmanager-blackboard-diff-neutral';
+		diff.textContent = 'No changes to submit.';
+		submitButton.disabled = true;
+		return;
+	}
+	const invalidKey = entries.find(([key]) => !isOverridableBlackboardKey(key));
+	if (invalidKey) {
+		message.textContent = `Override '${invalidKey[0]}' is managed by the navigator or has an invalid name.`;
+		message.className = 'btmanager-blackboard-diff-old';
+		submitButton.disabled = true;
+		return;
+	}
+	const complexEntry = entries.find(([, value]) => value !== null &&
+		(typeof value === 'object' || Array.isArray(value)));
+	if (complexEntry) {
+		message.textContent = `Override '${complexEntry[0]}' must be a primitive JSON value or null.`;
+		message.className = 'btmanager-blackboard-diff-old';
+		submitButton.disabled = true;
+		return;
+	}
+
+	message.textContent = `${entries.length} staged override${entries.length === 1 ? '' : 's'} — not yet applied.`;
+	message.className = 'btmanager-blackboard-diff-new';
+	entries.forEach(([key, value]) => {
+		if (Object.hasOwn(runtimeBlackboardDraftBase || {}, key)) {
+			appendBlackboardDiffLine(
+				diff, 'btmanager-blackboard-diff-old', '-', key, runtimeBlackboardDraftBase[key]);
+		}
+		if (value !== null) {
+			appendBlackboardDiffLine(diff, 'btmanager-blackboard-diff-new', '+', key, value);
+		}
+	});
+	submitButton.disabled = runtimeDebugState?.paused !== true;
+}
+
+function discardBlackboardDraft() {
+	runtimeBlackboardEditing = false;
+	runtimeBlackboardDraftBase = null;
+	runtimeBlackboardDraftText = '';
+	updateRuntimeFeedback();
+}
+
+function startBlackboardDraft() {
+	if (runtimeDebugState?.paused !== true) {
+		status.setError('Pause the behavior tree before editing blackboard overrides.');
+		return;
+	}
+	if (!isJsonObject(runtimeBlackboardState?.values)) {
+		status.setError('Wait for a blackboard state before editing overrides.');
+		return;
+	}
+	runtimeBlackboardDraftBase = cloneJson(overrideableBlackboardValues(runtimeBlackboardState.values));
+	runtimeBlackboardDraftText = JSON.stringify(runtimeBlackboardDraftBase, null, 2);
+	runtimeBlackboardEditing = true;
+	updateRuntimeFeedback();
+}
+
+async function submitBlackboardDraft() {
+	if (runtimeDebugState?.paused !== true) {
+		status.setError('Blackboard overrides can only be submitted while debugging is paused.');
+		return;
+	}
+	const parsed = parseBlackboardDraft();
+	if (parsed.error) {
+		status.setError(parsed.error);
+		return;
+	}
+	const entries = Object.entries(parsed.patch);
+	if (entries.length === 0) {
+		status.setOK('There are no blackboard changes to submit.');
+		return;
+	}
+
+	try {
+		logRuntime('info', `Command: Submit ${entries.length} blackboard override${entries.length === 1 ? '' : 's'}.`);
+		await sendDebugControl(6, '', [], JSON.stringify(parsed.patch));
+		runtimeBlackboardState = {
+			...runtimeBlackboardState,
+			values: parsed.value,
+			error: '',
+			active: true,
+		};
+		logRuntime('info', 'Blackboard overrides submitted.');
+		status.setOK('Blackboard overrides submitted.');
+		discardBlackboardDraft();
+	} catch (error) {
+		const message = errorMessage(error);
+		status.setError(`Unable to submit blackboard overrides: ${message}`);
+		logRuntime('error', `Unable to submit blackboard overrides: ${message}`);
+	}
+}
+
+function renderBlackboardDraft() {
+	const note = document.createElement('p');
+	note.className = 'btmanager-blackboard-draft-note';
+	note.textContent = 'Draft only. Navigator-managed values are hidden. Changes are not sent until Submit. Only changed top-level primitive values are submitted; null removes a key.';
+	runtimeFeedback.appendChild(note);
+
+	const editor = document.createElement('textarea');
+	editor.className = 'btmanager-blackboard-editor';
+	editor.spellcheck = false;
+	editor.value = runtimeBlackboardDraftText;
+	runtimeFeedback.appendChild(editor);
+
+	const message = document.createElement('p');
+	runtimeFeedback.appendChild(message);
+	const diff = document.createElement('pre');
+	diff.className = 'btmanager-blackboard-diff';
+	runtimeFeedback.appendChild(diff);
+
+	const actions = document.createElement('div');
+	actions.className = 'btmanager-blackboard-actions';
+	const discardButton = document.createElement('button');
+	discardButton.type = 'button';
+	discardButton.textContent = 'Discard changes';
+	discardButton.addEventListener('click', discardBlackboardDraft);
+	const submitButton = document.createElement('button');
+	submitButton.type = 'button';
+	submitButton.textContent = 'Submit';
+	submitButton.addEventListener('click', () => void submitBlackboardDraft());
+	actions.append(discardButton, submitButton);
+	runtimeFeedback.appendChild(actions);
+
+	const refresh = () => renderBlackboardDraftPreview(diff, message, submitButton);
+	editor.addEventListener('input', () => {
+		runtimeBlackboardDraftText = editor.value;
+		refresh();
+	});
+	refresh();
+}
+
 function updateRuntimeFeedback() {
 	if (runtimeMode !== 'debug' || !runtimeBlackboardOpen) {
 		runtimeFeedback.hidden = true;
@@ -931,9 +1175,30 @@ function updateRuntimeFeedback() {
 
 	runtimeFeedback.hidden = false;
 	runtimeFeedback.replaceChildren();
-	const heading = document.createElement('h2');
-	heading.textContent = 'Blackboard';
+	const heading = document.createElement('div');
+	heading.className = 'btmanager-blackboard-heading';
+	const title = document.createElement('h2');
+	title.textContent = runtimeBlackboardEditing ? 'Blackboard overrides' : 'Blackboard';
+	heading.appendChild(title);
+	if (!runtimeBlackboardEditing) {
+		const overrideButton = document.createElement('button');
+		overrideButton.type = 'button';
+		overrideButton.textContent = 'Override…';
+		overrideButton.disabled = runtimeDebugState?.paused !== true ||
+			!isJsonObject(runtimeBlackboardState?.values);
+		overrideButton.title = overrideButton.disabled
+			? 'Pause with a received blackboard state to edit overrides.'
+			: 'Stage blackboard overrides locally.';
+		overrideButton.addEventListener('click', startBlackboardDraft);
+		heading.appendChild(overrideButton);
+	}
 	runtimeFeedback.appendChild(heading);
+
+	if (runtimeBlackboardEditing) {
+		renderBlackboardDraft();
+		return;
+	}
+
 	const blackboard = document.createElement('pre');
 	blackboard.className = 'btmanager-runtime-blackboard';
 	if (runtimeBlackboardState?.error) {
@@ -1844,7 +2109,9 @@ async function loadFile(path) {
 		selectedGraphRuntimePath = '';
 		const data = await request(`/bt/file/${encodeURIComponent(path).replace(/%2F/g, '/')}`);
 		selectedPath = data.path;
+		savedSelectedPath = selectedPath;
 		fileList.value = selectedPath;
+		saveSettings();
 		updateSubtreeAction();
 		revision = data.revision;
 		savedContent = data.content;
@@ -1942,6 +2209,9 @@ async function loadFiles() {
 			fileList.appendChild(option);
 		});
 		fileList.disabled = data.files.length === 0;
+		if (!selectedPath && savedSelectedPath && data.files.some(file => file.path === savedSelectedPath)) {
+			await loadFile(savedSelectedPath);
+		}
 		status.setOK();
 	} catch (error) {
 		fileList.replaceChildren();
@@ -2072,6 +2342,10 @@ function parseBlackboardInputs() {
 }
 
 function disposeRuntime(runtime) {
+	if (runtime.heartbeatTimer !== undefined) {
+		clearInterval(runtime.heartbeatTimer);
+		runtime.heartbeatTimer = undefined;
+	}
 	runtime.action?.dispose();
 	runtime.stateSubscription?.unsubscribe();
 	runtime.nodeMapSubscription?.unsubscribe();
@@ -2086,6 +2360,9 @@ function finishRuntime(runtime, result) {
 	runtimeStopping = false;
 	runtimeDebugState = null;
 	runtimeBlackboardState = null;
+	runtimeBlackboardDraftBase = null;
+	runtimeBlackboardDraftText = '';
+	runtimeBlackboardEditing = false;
 	setRuntimeMode('');
 	updateRuntimeControls();
 	const errorCode = result?.result?.error_code ?? 0;
@@ -2111,6 +2388,21 @@ function finishRuntime(runtime, result) {
 		error_code: errorCode,
 		error_message: detail,
 	});
+}
+
+function finishReattachedRuntime(runtime) {
+	if (activeRuntime !== runtime) return;
+	disposeRuntime(runtime);
+	activeRuntime = null;
+	runtimeStopping = false;
+	runtimeDebugState = null;
+	runtimeBlackboardState = null;
+	runtimeBlackboardDraftBase = null;
+	runtimeBlackboardDraftText = '';
+	runtimeBlackboardEditing = false;
+	setRuntimeMode('');
+	logRuntime('info', 'Detached behavior tree ended. Its action result was delivered to the original browser session.');
+	status.setOK('Detached behavior tree ended.');
 }
 
 function asNumericArray(value) {
@@ -2141,7 +2433,7 @@ function applyRuntimeSnapshot(runtime, snapshot, source) {
 		logRuntime('warning', `${source} contained mismatched node state arrays.`);
 		return;
 	}
-	runtime.action.markActive();
+	runtime.action?.markActive?.();
 	let changed = false;
 	const changes = [];
 	const changedNodeUids = [];
@@ -2184,9 +2476,17 @@ function applyRuntimeSnapshot(runtime, snapshot, source) {
 			node_states: changedNodeStates,
 		});
 	}
-	if (!changed) return;
+	if (!changed) {
+		if (source === 'State' && snapshot.active === false && runtime.reattached) {
+			finishReattachedRuntime(runtime);
+		}
+		return;
+	}
 	logRuntime('info', `${source}: ${changes.join(', ')}`);
 	scheduleRuntimeDisplay();
+	if (source === 'State' && snapshot.active === false && runtime.reattached) {
+		finishReattachedRuntime(runtime);
+	}
 }
 
 function applyRuntimeNodeMap(runtime, nodeMap) {
@@ -2253,7 +2553,7 @@ function applyRuntimeDebugState(runtime, message) {
 		|| runtimeDebugState.node_path !== nextState.node_path
 		|| runtimeDebugState.reason !== nextState.reason;
 	runtimeDebugState = nextState;
-	runtime.action.markActive();
+	runtime.action?.markActive?.();
 	if (changed && nextState.paused) {
 		logRuntime('info', `Debug paused at ${nextState.node_path || 'the current node'}${
 			nextState.reason ? ` (${nextState.reason.replace(/_/g, ' ')})` : ''}.`);
@@ -2274,8 +2574,241 @@ function applyRuntimeBlackboardState(runtime, message) {
 		error: typeof payload.error === 'string' ? payload.error : '',
 		active: payload.active === true,
 	};
-	runtime.action.markActive();
-	scheduleRuntimeDisplay();
+	runtime.action?.markActive?.();
+	if (!runtimeBlackboardEditing) scheduleRuntimeDisplay();
+}
+
+function startRuntimeHeartbeat(runtime) {
+	if (!runtime.heartbeatConfiguration || runtime.detached) return;
+	let deliveryFailed = false;
+	const publishHeartbeat = () => {
+		try {
+			const publication = endpointService.publishRaw(runtime.heartbeatConfiguration, {
+				data: runtime.deploymentId,
+			});
+			Promise.resolve(publication).catch(error => {
+				if (deliveryFailed || activeRuntime !== runtime) return;
+				deliveryFailed = true;
+				logRuntime('warning', `Heartbeat publication failed: ${errorMessage(error)}`);
+			});
+		} catch (error) {
+			if (deliveryFailed || activeRuntime !== runtime) return;
+			deliveryFailed = true;
+			logRuntime('warning', `Heartbeat publication failed: ${errorMessage(error)}`);
+		}
+	};
+	publishHeartbeat();
+	runtime.heartbeatTimer = setInterval(publishHeartbeat, 1000);
+}
+
+function setAttachAvailability(available, deploymentId = '') {
+	const becameAvailable = available && !attachAvailable;
+	attachAvailable = available;
+	if (becameAvailable) {
+		logRuntime('info', `Attach is available for detached deployment ${deploymentId}.`);
+	}
+	updateRuntimeControls();
+}
+
+function probeForAttachableRuntime() {
+	const probeSequence = ++attachProbeSequence;
+	if (activeRuntime || runtimeStarting) {
+		setAttachAvailability(false);
+		return;
+	}
+	const navigatorConfiguration = navigatorEndpointConfigurationEditor.activeConfiguration;
+	const endpoint = navigatorConfiguration?.endpoint?.action;
+	if (typeof endpoint !== 'string' || endpoint === '') {
+		setAttachAvailability(false);
+		return;
+	}
+
+	let stateConfiguration;
+	try {
+		stateConfiguration = endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/state`,
+			endpointValues: {
+				nativeMessageType: 'labust_nav2_msgs/msg/BehaviorTreeExecutionState',
+			},
+		});
+	} catch {
+		setAttachAvailability(false);
+		return;
+	}
+
+	let subscription = null;
+	let timeoutId = null;
+	let settled = false;
+	const finish = (available, deploymentId = '') => {
+		if (settled) return;
+		settled = true;
+		if (timeoutId !== null) clearTimeout(timeoutId);
+		subscription?.unsubscribe();
+		if (probeSequence === attachProbeSequence) {
+			setAttachAvailability(available, deploymentId);
+		}
+	};
+	try {
+		timeoutId = setTimeout(() => finish(false), 2000);
+		subscription = endpointService.subscribeRaw(stateConfiguration, snapshot => {
+			const deploymentId = typeof snapshot?.deployment_id === 'string'
+				? snapshot.deployment_id : '';
+			finish(
+				snapshot?.active === true && snapshot?.detached === true && deploymentId.length === 64,
+				deploymentId,
+			);
+		});
+		if (settled) subscription.unsubscribe();
+	} catch {
+		finish(false);
+	}
+}
+
+function waitForAttachableExecutionState(stateConfiguration) {
+	return new Promise((resolve, reject) => {
+		let subscription = null;
+		let timeoutId = null;
+		let settled = false;
+		const finish = callback => {
+			if (settled) return;
+			settled = true;
+			if (timeoutId !== null) clearTimeout(timeoutId);
+			subscription?.unsubscribe();
+			callback();
+		};
+		try {
+			timeoutId = setTimeout(() => {
+				finish(() => reject(new Error('No active detached behavior tree was found.')));
+			}, 2000);
+			subscription = endpointService.subscribeRaw(stateConfiguration, snapshot => {
+				if (!snapshot || snapshot.active !== true) return;
+				if (snapshot.detached !== true) {
+					finish(() => reject(new Error(
+						'An attached behavior tree is active. Only detached sessions can be attached.',
+					)));
+					return;
+				}
+				if (typeof snapshot.deployment_id !== 'string' || snapshot.deployment_id.length !== 64) {
+					finish(() => reject(new Error('Navigator reported an invalid detached deployment ID.')));
+					return;
+				}
+				finish(() => resolve(snapshot));
+			});
+			if (settled) subscription.unsubscribe();
+		} catch (error) {
+			finish(() => reject(error));
+		}
+	});
+}
+
+async function restoreSelectedTreeForAttach(entryPath) {
+	if (typeof entryPath !== 'string' || entryPath === '') return false;
+	if (selectedPath === entryPath) return true;
+	await loadFile(entryPath);
+	return selectedPath === entryPath;
+}
+
+async function attachDetachedRuntime() {
+	if (activeRuntime || runtimeStarting) return;
+	setAttachAvailability(false);
+	const navigatorConfiguration = navigatorEndpointConfigurationEditor.activeConfiguration;
+	const endpoint = navigatorConfiguration?.endpoint?.action;
+	if (typeof endpoint !== 'string' || endpoint === '') {
+		status.setError('Configure a RunBehaviorTree action endpoint before attaching.');
+		return;
+	}
+	runtimeStarting = true;
+	updateRuntimeControls();
+	try {
+		const stateConfiguration = endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/state`,
+			endpointValues: {
+				nativeMessageType: 'labust_nav2_msgs/msg/BehaviorTreeExecutionState',
+			},
+		});
+		const snapshot = await waitForAttachableExecutionState(stateConfiguration);
+		if (!await restoreSelectedTreeForAttach(snapshot.entry_path)) {
+			throw new Error(
+				`The detached deployment uses '${snapshot.entry_path || 'an unknown entry XML'}', ` +
+				'which is not available in this behavior-tree directory.',
+			);
+		}
+		const mode = snapshot.debug === true ? 'debug' : 'play';
+		const nodeMapConfiguration = endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/node_map`,
+			endpointValues: {
+				nativeMessageType: 'labust_nav2_msgs/msg/BehaviorTreeNodeMap',
+			},
+		});
+		const debugControlConfiguration = mode === 'debug' ? endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'service',
+			address: `${endpoint}/debug/control`,
+			endpointValues: { serviceType: 'labust_nav2_msgs/srv/ControlBehaviorTreeDebug' },
+		}) : null;
+		const debugStateConfiguration = mode === 'debug' ? endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/debug/state`,
+			endpointValues: { nativeMessageType: 'std_msgs/msg/String' },
+		}) : null;
+		const blackboardConfiguration = mode === 'debug' ? endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/blackboard`,
+			endpointValues: { nativeMessageType: 'std_msgs/msg/String' },
+		}) : null;
+		runtimeNodeStates.clear();
+		runtimeNodeStatesByPath.clear();
+		runtimeNodePathsByUid.clear();
+		runtimeDebugState = null;
+		runtimeBlackboardState = null;
+		const runtime = {
+			action: Object.freeze({ markActive() {}, dispose() {} }),
+			deploymentId: snapshot.deployment_id,
+			detached: true,
+			reattached: true,
+			canCancel: false,
+			debugControlConfiguration,
+			record: null,
+		};
+		runtime.stateSubscription = endpointService.subscribeRaw(
+			stateConfiguration, state => applyRuntimeSnapshot(runtime, state, 'State'));
+		runtime.nodeMapSubscription = endpointService.subscribeRaw(
+			nodeMapConfiguration, nodeMap => applyRuntimeNodeMap(runtime, nodeMap));
+		runtime.debugStateSubscription = debugStateConfiguration
+			? endpointService.subscribeRaw(
+				debugStateConfiguration, message => applyRuntimeDebugState(runtime, message)) : null;
+		runtime.blackboardSubscription = blackboardConfiguration
+			? endpointService.subscribeRaw(
+				blackboardConfiguration, message => applyRuntimeBlackboardState(runtime, message)) : null;
+		activeRuntime = runtime;
+		setRuntimeMode(mode);
+		applyRuntimeSnapshot(runtime, snapshot, 'State');
+		logRuntime('info', `Attached to detached ${mode === 'debug' ? 'debug' : 'runtime'}: ${runtime.deploymentId}.`);
+		logRuntime('info', 'Stop is unavailable because the original browser owns this action goal.');
+		status.setOK(`Attached to detached ${mode === 'debug' ? 'debug' : 'runtime'}.`);
+	} catch (error) {
+		const message = errorMessage(error);
+		status.setError(`Unable to attach to detached behavior tree: ${message}`);
+		logRuntime('error', `Unable to attach to detached behavior tree: ${message}`);
+	} finally {
+		runtimeStarting = false;
+		updateRuntimeControls();
+		if (!activeRuntime) void probeForAttachableRuntime();
+	}
 }
 
 async function startRuntime(mode) {
@@ -2291,6 +2824,7 @@ async function startRuntime(mode) {
 	}
 	let runRecord = null;
 	runtimeStarting = true;
+	setAttachAvailability(false);
 	runRecord = createRunRecord(mode);
 	activeRunRecord = runRecord;
 	await createRunFile(runRecord);
@@ -2362,11 +2896,21 @@ async function startRuntime(mode) {
 			address: `${endpoint}/blackboard`,
 			endpointValues: { nativeMessageType: 'std_msgs/msg/String' },
 		}) : null;
+		const heartbeatConfiguration = detachedMode ? null : endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/heartbeat`,
+			endpointValues: { nativeMessageType: 'std_msgs/msg/String' },
+		});
 		runtimeNodeStates.clear();
 		runtimeNodeStatesByPath.clear();
 		runtimeNodePathsByUid.clear();
 		runtimeDebugState = null;
 		runtimeBlackboardState = null;
+		runtimeBlackboardDraftBase = null;
+		runtimeBlackboardDraftText = '';
+		runtimeBlackboardEditing = false;
 		let runtime = null;
 		const pendingSnapshots = [];
 		const pendingNodeMaps = [];
@@ -2420,6 +2964,7 @@ async function startRuntime(mode) {
 				behavior_tree: deployment.behavior_tree,
 				deployment_id: deployment.deployment_id,
 				blackboard_json: blackboardJson,
+				detached: detachedMode,
 				debug: mode === 'debug',
 				debug_start_mode: mode === 'debug' && debugStartMode === 'breakpoint' ? 1 : 0,
 				breakpoint_paths: breakpoints,
@@ -2442,16 +2987,20 @@ async function startRuntime(mode) {
 			debugStateSubscription,
 			blackboardSubscription,
 			debugControlConfiguration,
+			heartbeatConfiguration,
 			deploymentId: deployment.deployment_id,
+			detached: detachedMode,
+			canCancel: true,
 			record: runRecord,
 		};
 		activeRuntime = runtime;
+		startRuntimeHeartbeat(runtime);
 		setRuntimeMode(mode);
 		pendingNodeMaps.forEach(nodeMap => applyRuntimeNodeMap(runtime, nodeMap));
 		pendingSnapshots.forEach(({ snapshot, source }) => applySnapshot(snapshot, source));
 		pendingDebugStates.forEach(message => applyRuntimeDebugState(runtime, message));
 		pendingBlackboardStates.forEach(message => applyRuntimeBlackboardState(runtime, message));
-		status.setOK(`${mode === 'debug' ? 'Debug' : 'Runtime'} started.`);
+		status.setOK(`${mode === 'debug' ? 'Debug' : 'Runtime'} started${detachedMode ? ' detached' : ''}.`);
 		void action.result.then(result => finishRuntime(runtime, result)).catch(error => {
 			if (activeRuntime === runtime) {
 				finishRuntime(runtime, { result: { error_msg: String(error) } });
@@ -2472,7 +3021,12 @@ async function startRuntime(mode) {
 	}
 }
 
-async function sendDebugControl(command, nodePath = '', breakpointPaths = []) {
+async function sendDebugControl(
+	command,
+	nodePath = '',
+	breakpointPaths = [],
+	blackboardJson = '',
+) {
 	const runtime = activeRuntime;
 	if (!runtime || runtimeMode !== 'debug' || !runtime.debugControlConfiguration) {
 		throw new Error('No active behavior-tree debug session exists.');
@@ -2482,6 +3036,7 @@ async function sendDebugControl(command, nodePath = '', breakpointPaths = []) {
 		command,
 		node_path: nodePath,
 		breakpoint_paths: breakpointPaths,
+		blackboard_json: blackboardJson,
 	});
 	if (!response.accepted) {
 		throw new Error(response.error_message || 'Debug command was rejected.');
@@ -2504,6 +3059,7 @@ saveButton.addEventListener('click', async () => {
 });
 playButton.addEventListener('click', () => startRuntime('play'));
 debugButton.addEventListener('click', () => startRuntime('debug'));
+attachButton.addEventListener('click', () => void attachDetachedRuntime());
 debugTickButton.addEventListener('click', async () => {
 	try {
 		logRuntime('info', 'Command: Tick.');
@@ -2695,7 +3251,10 @@ panel.addEventListener('wheel', event => {
 	if (!nodeList.contains(event.target)) event.preventDefault();
 }, { passive: false });
 
-function togglePanel() { panel.hidden = !panel.hidden; }
+function togglePanel() {
+	panel.hidden = !panel.hidden;
+	if (!panel.hidden) void probeForAttachableRuntime();
+}
 
 window.addEventListener('iconbar_height_change', syncPanelTop);
 window.addEventListener('resize', syncPanelTop);

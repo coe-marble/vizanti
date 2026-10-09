@@ -10,6 +10,7 @@
 	.btmanager-config-section label { display: block; margin-top: 8px; }
 	.btmanager-config-section label:first-of-type { margin-top: 0; }
 	.btmanager-config-section input { width: 100%; box-sizing: border-box; }
+	.btmanager-config-section input[type="checkbox"] { width: 50px; height: 20px; padding: 0; }
 	.btmanager-config-section textarea { width: 100%; min-height: 90px; box-sizing: border-box; resize: vertical; }
 	.btmanager-config-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 	.btmanager-config-actions button { margin: 0; }
@@ -48,6 +49,8 @@
 				<option value="breakpoint">Run to breakpoint</option>
 			</select>
 			<p class="comment">Breakpoints are the red markers on graph nodes. They apply to the next debug run.</p>
+			<label><input id="{uniqueID}_detached_mode" type="checkbox"> Run detached</label>
+			<p class="comment">Detached runs continue without this browser and can be attached here. Attached runs require a browser heartbeat and are canceled after five seconds without one.</p>
 			<p class="comment">Select a Robot Model to use its ROS namespace. Play deploys the selected XML bundle, then sends this object with the action goal.</p>
 		</section>
 

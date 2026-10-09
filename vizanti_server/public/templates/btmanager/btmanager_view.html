@@ -53,6 +53,16 @@
 	.btmanager-runtime-feedback .idle { color: #b0b0b0; }
 	.btmanager-runtime-feedback .btmanager-debug-status { margin: 0 0 10px; color: #f0c66f; overflow-wrap: anywhere; }
 	.btmanager-runtime-feedback .btmanager-runtime-blackboard { max-height: 220px; margin: 0; overflow: auto; padding: 7px; border: 1px solid #4d4d4d; background: #161616; color: #c9d7e8; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.btmanager-runtime-feedback .btmanager-blackboard-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	.btmanager-runtime-feedback .btmanager-blackboard-heading button, .btmanager-runtime-feedback .btmanager-blackboard-actions button { margin: 0; padding: 3px 6px; }
+	.btmanager-runtime-feedback .btmanager-blackboard-draft-note { margin: 0 0 8px; color: #f0c66f; line-height: 1.35; }
+	.btmanager-runtime-feedback .btmanager-blackboard-editor { width: 100%; min-height: 150px; max-height: 240px; box-sizing: border-box; resize: vertical; border: 1px solid #4d4d4d; background: #161616; color: #c9d7e8; font-family: 'Ubuntu Mono', monospace; font-size: inherit; line-height: 1.35; }
+	.btmanager-runtime-feedback .btmanager-blackboard-diff { max-height: 150px; margin: 8px 0; overflow: auto; padding: 7px; border: 1px solid #4d4d4d; background: #161616; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.btmanager-runtime-feedback .btmanager-blackboard-diff-line { display: block; }
+	.btmanager-runtime-feedback .btmanager-blackboard-diff-old { color: #f08a8a; }
+	.btmanager-runtime-feedback .btmanager-blackboard-diff-new { color: #83df90; }
+	.btmanager-runtime-feedback .btmanager-blackboard-diff-neutral { color: #b0b0b0; }
+	.btmanager-runtime-feedback .btmanager-blackboard-actions { display: flex; justify-content: flex-end; gap: 6px; }
 	.btmanager-runtime-log { position: absolute; right: 12px; bottom: 12px; z-index: 3; display: grid; grid-template-rows: auto minmax(90px, 1fr); width: min(560px, calc(100% - 48px)); max-height: 260px; border: 1px solid rgba(150, 150, 150, 0.75); background: rgba(27, 27, 27, 0.94); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); color: #ddd; font-family: 'Ubuntu Mono', monospace; font-size: 0.78rem; }
 	.btmanager-runtime-log[hidden] { display: none; }
 	.btmanager-runtime-log-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; border-bottom: 1px solid #555; font-family: sans-serif; font-size: 0.86rem; }

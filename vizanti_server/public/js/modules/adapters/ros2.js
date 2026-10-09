@@ -1033,6 +1033,18 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 			topic.unadvertise();
 		},
 
+		publishRaw(instance, configuration, endpoint, message) {
+			if (!message || typeof message !== "object" || Array.isArray(message)) {
+				throw new TypeError("ROS2 raw topic publication requires an object message.");
+			}
+			const topic = new roslib.Topic(createTopicOptions(getClient(instance), {
+				topic: endpoint.topic,
+				messageType: endpoint.nativeMessageType,
+			}));
+			topic.publish(new roslib.Message(message));
+			topic.unadvertise();
+		},
+
 		call(instance, configuration, endpoint, request) {
 			const service = new roslib.Service(createServiceOptions(getClient(instance), endpoint));
 			return new Promise((resolve, reject) => {
