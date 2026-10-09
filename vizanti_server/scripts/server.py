@@ -12,6 +12,7 @@ import sys
 from flask import Flask, jsonify, render_template, send_from_directory, make_response, request
 from waitress.server import create_server
 from bt_file_manager import BtFileManager, register_routes
+from bt_run_manager import BtRunManager, register_routes as register_run_routes
 from service_handler import ServiceHandler
 
 from pathlib import Path
@@ -30,11 +31,16 @@ param_behavior_tree_folder = os.path.join(
 	os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
 	"vizanti/btmanager/behavior_trees",
 )
+param_behavior_tree_runs_folder = os.path.join(
+	os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")),
+	"vizanti/btmanager/runs",
+)
 param_copy_demo_trees = False
 param_demo_behavior_tree_source = ""
 param_allow_shell_commands = True
 param_shell_command_max_timeout_seconds = 30
 bt_file_manager = BtFileManager()
+bt_run_manager = BtRunManager()
 service_handler = None
 
 def get_public_dir():
@@ -158,7 +164,7 @@ def configure_ros_node(arguments):
 	import rclpy
 
 	global node, param_base_url, param_port, param_port_rosbridge, param_compression
-	global param_default_widget_config, param_behavior_tree_folder
+	global param_default_widget_config, param_behavior_tree_folder, param_behavior_tree_runs_folder
 	global param_copy_demo_trees, param_demo_behavior_tree_source
 	global param_allow_shell_commands, param_shell_command_max_timeout_seconds
 
@@ -172,6 +178,7 @@ def configure_ros_node(arguments):
 	node.declare_parameter('compression', param_compression)
 	node.declare_parameter('default_widget_config', param_default_widget_config)
 	node.declare_parameter('behavior_tree_folder', param_behavior_tree_folder)
+	node.declare_parameter('behavior_tree_runs_folder', param_behavior_tree_runs_folder)
 	node.declare_parameter('copy_demo_trees', param_copy_demo_trees)
 	node.declare_parameter('demo_behavior_tree_source', param_demo_behavior_tree_source)
 	node.declare_parameter('allow_shell_commands', param_allow_shell_commands)
@@ -184,6 +191,8 @@ def configure_ros_node(arguments):
 	param_compression = node.get_parameter('compression').value
 	param_default_widget_config = node.get_parameter('default_widget_config').value
 	param_behavior_tree_folder = os.path.expanduser(node.get_parameter('behavior_tree_folder').value)
+	param_behavior_tree_runs_folder = os.path.expanduser(
+		node.get_parameter('behavior_tree_runs_folder').value)
 	param_copy_demo_trees = node.get_parameter('copy_demo_trees').value
 	param_demo_behavior_tree_source = os.path.expanduser(node.get_parameter('demo_behavior_tree_source').value)
 	param_allow_shell_commands = node.get_parameter('allow_shell_commands').value
@@ -354,7 +363,9 @@ class ServerThread(threading.Thread):
 
 def main(args=None):
 	global node, param_base_url, param_port, param_port_rosbridge, param_compression, param_default_widget_config
-	global param_behavior_tree_folder, param_copy_demo_trees, param_demo_behavior_tree_source
+	global param_behavior_tree_folder, param_behavior_tree_runs_folder
+	global param_copy_demo_trees, param_demo_behavior_tree_source
+	global bt_run_manager
 	global service_handler
 
 	arguments = list(sys.argv[1:] if args is None else args)
@@ -366,6 +377,8 @@ def main(args=None):
 		flask_debug = node.get_parameter('flask_debug').value
 	os.makedirs(param_behavior_tree_folder, exist_ok=True)
 	bt_file_manager.set_root(param_behavior_tree_folder)
+	if not bt_run_manager.set_root(param_behavior_tree_runs_folder):
+		raise RuntimeError(f'Unable to create behavior-tree run storage: {param_behavior_tree_runs_folder}')
 
 	if param_copy_demo_trees:
 		if not param_demo_behavior_tree_source:
@@ -400,6 +413,7 @@ def main(args=None):
 	app.add_url_rule(param_base_url + '/api/ros2/recording', 'recording_status', recording_status, methods=['GET'])
 	app.add_url_rule(param_base_url + '/api/ros2/recording', 'set_recording', set_recording, methods=['POST'])
 	register_routes(app, param_base_url, bt_file_manager)
+	register_run_routes(app, param_base_url, bt_run_manager)
 	app.add_url_rule(param_base_url + '/<path:path>', 'serve_static', serve_static)
 
 	server = ServerThread(app, param_host, param_port)

@@ -30,6 +30,7 @@ install(DIRECTORY
 install(PROGRAMS
   scripts/__init__.py
   scripts/bt_file_manager.py
+  scripts/bt_run_manager.py
   scripts/server.py
   scripts/rqt_reconfigure_param_api.py
   DESTINATION lib/${PROJECT_NAME}

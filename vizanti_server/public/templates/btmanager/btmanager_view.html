@@ -6,10 +6,12 @@
 	.btmanager-toolbar { display: flex; gap: 6px; align-items: center; padding: 8px; border-bottom: 1px solid #555; min-width: 0; }
 	.btmanager-toolbar button:disabled, .btmanager-actions button:disabled { opacity: 0.42; cursor: not-allowed; filter: grayscale(1); }
 	.btmanager-runtime-control { display: inline-grid; place-items: center; width: 30px; height: 30px; margin: 0; padding: 0; }
+	.btmanager-runtime-control[hidden] { display: none; }
 	.btmanager-runtime-control svg { width: 15px; height: 15px; fill: currentColor; stroke: currentColor; stroke-width: 1.8; }
 	.btmanager-runtime-control.play { color: #83df90; }
 	.btmanager-runtime-control.debug { color: #f0c66f; }
 	.btmanager-runtime-control.stop { color: #f08a8a; }
+	.btmanager-debug-command { width: auto; min-width: 0; padding: 0 8px; color: #f0c66f; font-size: 0.78rem; }
 	.btmanager-runtime-control.active { box-shadow: inset 0 0 0 1px currentColor; background: #1b1b1b; }
 	.btmanager-runtime-control:disabled { opacity: 0.35; cursor: not-allowed; filter: grayscale(1); }
 	.btmanager-runtime-toolbar { position: absolute; top: 12px; left: 50%; z-index: 3; display: flex; gap: 6px; align-items: center; padding: 5px 8px; border: 1px solid rgba(150, 150, 150, 0.75); background: rgba(32, 32, 32, 0.88); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3); backdrop-filter: blur(3px); transform: translateX(-50%); }
@@ -21,6 +23,14 @@
 	.btmanager-tab.active-tab { background: #262626; color: #54db67; }
 	.btmanager-tab-content { min-height: 0; }
 	.btmanager-tab-content[hidden] { display: none; }
+	.btmanager-runs-tab { display: grid; grid-template-rows: auto auto auto minmax(180px, 1fr) minmax(110px, 0.55fr); gap: 8px; height: 100%; min-height: 0; }
+	.btmanager-runs-toolbar, .btmanager-runs-timeline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+	.btmanager-runs-toolbar select { flex: 1 1 280px; min-width: 0; }
+	.btmanager-runs-summary { color: #c9d7e8; font-family: 'Ubuntu Mono', monospace; font-size: 0.82rem; white-space: pre-wrap; }
+	.btmanager-runs-timeline input { flex: 1 1 240px; }
+	.btmanager-runs-tree { min-height: 0; overflow: auto; border: 1px solid #555; background: #171717; }
+	.btmanager-runs-tree .btmanager-tree-canvas { min-width: 100%; min-height: 100%; }
+	.btmanager-runs-log { min-height: 0; margin: 0; padding: 8px; overflow: auto; border: 1px solid #555; background: #171717; color: #c9d7e8; font-family: 'Ubuntu Mono', monospace; font-size: 0.8rem; white-space: pre-wrap; }
 	.btmanager-text-tab { display: grid; grid-template-rows: minmax(150px, 1fr) minmax(110px, 0.7fr); gap: 8px; height: 100%; }
 	.btmanager-editor textarea { width: 100%; height: 100%; box-sizing: border-box; resize: none; color: #eee; background: #171717; font-family: 'Ubuntu Mono', monospace; font-size: 0.9rem; }
 	.btmanager-actions { display: flex; gap: 6px; align-items: center; }
@@ -33,14 +43,16 @@
 	.btmanager-components-hidden .btmanager-components-resize { display: none; }
 	.btmanager-runtime-mode .btmanager-workspace { grid-template-columns: minmax(0, 1fr); }
 	.btmanager-runtime-mode .btmanager-node-library, .btmanager-runtime-mode .btmanager-components-resize, .btmanager-runtime-mode .btmanager-inspector { display: none; }
-	.btmanager-runtime-feedback { display: none; position: absolute; top: 12px; right: 12px; z-index: 2; width: min(340px, calc(100% - 48px)); max-height: 280px; overflow: auto; border: 1px solid rgba(150, 150, 150, 0.75); background: rgba(27, 27, 27, 0.9); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); padding: 8px; color: #ddd; font-family: 'Ubuntu Mono', monospace; font-size: 0.8rem; }
-	.btmanager-runtime-mode .btmanager-runtime-feedback { display: block; }
+	.btmanager-runtime-feedback { display: none; position: absolute; top: 12px; right: 12px; z-index: 2; width: min(380px, calc(100% - 48px)); max-height: min(560px, calc(100% - 48px)); overflow: auto; border: 1px solid rgba(150, 150, 150, 0.75); background: rgba(27, 27, 27, 0.9); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); padding: 8px; color: #ddd; font-family: 'Ubuntu Mono', monospace; font-size: 0.8rem; }
+	.btmanager-runtime-feedback:not([hidden]) { display: block; }
 	.btmanager-runtime-feedback h2 { margin: 0 0 8px; color: #ddd; font-family: sans-serif; font-size: 0.9rem; }
 	.btmanager-runtime-feedback ul { margin: 0; padding-left: 18px; }
 	.btmanager-runtime-feedback .running { color: #f0c66f; }
 	.btmanager-runtime-feedback .success { color: #83df90; }
 	.btmanager-runtime-feedback .failure { color: #f08a8a; }
 	.btmanager-runtime-feedback .idle { color: #b0b0b0; }
+	.btmanager-runtime-feedback .btmanager-debug-status { margin: 0 0 10px; color: #f0c66f; overflow-wrap: anywhere; }
+	.btmanager-runtime-feedback .btmanager-runtime-blackboard { max-height: 220px; margin: 0; overflow: auto; padding: 7px; border: 1px solid #4d4d4d; background: #161616; color: #c9d7e8; white-space: pre-wrap; overflow-wrap: anywhere; }
 	.btmanager-runtime-log { position: absolute; right: 12px; bottom: 12px; z-index: 3; display: grid; grid-template-rows: auto minmax(90px, 1fr); width: min(560px, calc(100% - 48px)); max-height: 260px; border: 1px solid rgba(150, 150, 150, 0.75); background: rgba(27, 27, 27, 0.94); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); color: #ddd; font-family: 'Ubuntu Mono', monospace; font-size: 0.78rem; }
 	.btmanager-runtime-log[hidden] { display: none; }
 	.btmanager-runtime-log-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; border-bottom: 1px solid #555; font-family: sans-serif; font-size: 0.86rem; }
@@ -83,10 +95,15 @@
 	.btmanager-tree-node rect { stroke: #b0b0b0; stroke-width: 1.5; rx: 7; }
 	.btmanager-tree-node:hover rect, .btmanager-tree-node.selected rect { stroke: #fff; stroke-width: 2.5; }
 	.btmanager-tree-node.replace-target rect { stroke: #78db88; stroke-width: 3; }
+	.btmanager-tree-node.debug-paused-node rect { stroke: #ffca6a !important; stroke-width: 4px !important; }
 	.btmanager-runtime-mode .btmanager-tree-node rect { fill: #4a4a4a !important; }
 	.btmanager-runtime-mode .btmanager-tree-node.runtime-running rect { fill: #b58a27 !important; }
 	.btmanager-runtime-mode .btmanager-tree-node.runtime-success rect { fill: #386b42 !important; }
 	.btmanager-runtime-mode .btmanager-tree-node.runtime-failure rect { fill: #8d3c3c !important; }
+	.btmanager-run-replay-mode .btmanager-tree-node rect { fill: #4a4a4a !important; }
+	.btmanager-run-replay-mode .btmanager-tree-node.runtime-running rect { fill: #b58a27 !important; }
+	.btmanager-run-replay-mode .btmanager-tree-node.runtime-success rect { fill: #386b42 !important; }
+	.btmanager-run-replay-mode .btmanager-tree-node.runtime-failure rect { fill: #8d3c3c !important; }
 	.btmanager-tree-node.read-only-node rect { stroke-dasharray: 5 3; }
 	.btmanager-tree-canvas.dragging-component .btmanager-tree-node { opacity: 0.35; }
 	.btmanager-tree-canvas.dragging-component .btmanager-tree-node.can-receive { opacity: 1; }
@@ -103,6 +120,10 @@
 	.btmanager-subtree-toggle { cursor: pointer; }
 	.btmanager-subtree-toggle circle { fill: #276c72; stroke: #a9f1f6; stroke-width: 1.5; }
 	.btmanager-subtree-toggle text { fill: #efffff; font-family: sans-serif; font-size: 15px; font-weight: bold; pointer-events: none; }
+	.btmanager-breakpoint-toggle { cursor: pointer; }
+	.btmanager-breakpoint-toggle circle { fill: #313131; stroke: #939393; stroke-width: 1.5; }
+	.btmanager-breakpoint-toggle.active circle { fill: #b83d42; stroke: #ffc0c3; stroke-width: 2; }
+	.btmanager-breakpoint-toggle text { fill: #e8e8e8; font-family: sans-serif; font-size: 12px; font-weight: bold; pointer-events: none; }
 	.btmanager-inspector-content { overflow: auto; color: #ddd; font-size: 0.9rem; }
 	.btmanager-inspector-content dl { margin: 0; }
 	.btmanager-inspector-content dt { margin-top: 10px; color: #9cc8ff; }
@@ -131,17 +152,19 @@
 		<button id="{uniqueID}_new_subtree" title="Create local subtree" disabled>SubTree…</button>
 		<button id="{uniqueID}_delete_file" title="Delete selected behavior tree file" disabled>Delete</button>
 		<button id="{uniqueID}_runtime_log_toggle" title="Show runtime log" aria-expanded="false">Log</button>
+		<button id="{uniqueID}_runtime_blackboard_toggle" title="Show debug blackboard" aria-expanded="false" hidden>Blackboard</button>
 		<span class="btmanager-toolbar-spacer"></span>
 		<button id="{uniqueID}_maximize" title="Maximize editor" aria-label="Maximize editor">⛶</button>
 	</header>
 	<div class="btmanager-editor">
-		<div class="btmanager-tabs" role="tablist"><button id="{uniqueID}_tree_tab_button" class="btmanager-tab active-tab" role="tab" aria-selected="true">Tree</button><button id="{uniqueID}_text_tab_button" class="btmanager-tab" role="tab" aria-selected="false">Text</button></div>
+		<div class="btmanager-tabs" role="tablist"><button id="{uniqueID}_tree_tab_button" class="btmanager-tab active-tab" role="tab" aria-selected="true">Tree</button><button id="{uniqueID}_text_tab_button" class="btmanager-tab" role="tab" aria-selected="false">Text</button><button id="{uniqueID}_runs_tab_button" class="btmanager-tab" role="tab" aria-selected="false">Runs</button></div>
 		<div id="{uniqueID}_text_tab" class="btmanager-tab-content btmanager-text-tab" role="tabpanel" hidden><textarea id="{uniqueID}_xml" spellcheck="false" disabled></textarea><pre id="{uniqueID}_graph" class="btmanager-graph">Select an XML file to inspect its behavior tree.</pre></div>
+		<div id="{uniqueID}_runs_tab" class="btmanager-tab-content btmanager-runs-tab" role="tabpanel" hidden><div class="btmanager-runs-toolbar"><select id="{uniqueID}_runs_list" aria-label="Recorded behavior tree run"><option value="">No recorded runs</option></select><button id="{uniqueID}_runs_refresh" type="button">Refresh</button></div><div id="{uniqueID}_runs_summary" class="btmanager-runs-summary">Select a recorded run to inspect it.</div><div class="btmanager-runs-timeline"><label for="{uniqueID}_runs_timeline">Frame</label><input id="{uniqueID}_runs_timeline" type="range" min="0" max="0" value="0" disabled><output id="{uniqueID}_runs_frame">—</output></div><div id="{uniqueID}_runs_tree" class="btmanager-runs-tree">Select a recorded run to replay its tree.</div><pre id="{uniqueID}_runs_log" class="btmanager-runs-log">Run logs appear here.</pre></div>
 		<div id="{uniqueID}_tree_tab" class="btmanager-tab-content btmanager-tree-tab" role="tabpanel">
 			<div class="btmanager-workspace">
 				<aside class="btmanager-node-library"><div class="btmanager-library-header"><h2 class="btmanager-library-heading">Components</h2><button id="{uniqueID}_components_toggle" class="btmanager-library-toggle" title="Hide components" aria-label="Hide components">‹</button></div><div class="btmanager-library-content"><input id="{uniqueID}_node_search" class="btmanager-node-search" type="search" placeholder="Search components..." aria-label="Search components" /><div id="{uniqueID}_node_list" class="btmanager-node-list"></div></div></aside>
 				<div id="{uniqueID}_components_resize" class="btmanager-components-resize" title="Resize components panel"></div>
-				<div class="btmanager-graph-panel"><div class="btmanager-runtime-toolbar"><button id="{uniqueID}_play" class="btmanager-runtime-control play" title="Run behavior tree" aria-label="Run behavior tree"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg></button><button id="{uniqueID}_debug" class="btmanager-runtime-control debug" title="Debug behavior tree" aria-label="Debug behavior tree"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" d="M5 6.5h6v6H5zM8 2v2M3 4.5l1.5 1M13 4.5l-1.5 1M3 8h1M12 8h1M3 12l1.5-1M13 12l-1.5-1"/><circle cx="6.7" cy="9.2" r=".7"/><circle cx="9.3" cy="9.2" r=".7"/></svg></button><button id="{uniqueID}_stop" class="btmanager-runtime-control stop" title="Stop behavior tree" aria-label="Stop behavior tree" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9"/></svg></button></div><div id="{uniqueID}_tree" class="btmanager-tree">Select an XML file to inspect its behavior tree.</div><aside id="{uniqueID}_runtime_feedback" class="btmanager-runtime-feedback"><h2>Runtime states</h2><div>Waiting for action feedback…</div></aside><aside id="{uniqueID}_runtime_log" class="btmanager-runtime-log" hidden><header class="btmanager-runtime-log-header"><h2>Runtime log</h2><button id="{uniqueID}_runtime_log_clear" type="button">Clear</button></header><pre id="{uniqueID}_runtime_log_entries" class="btmanager-runtime-log-entries"></pre></aside><aside class="btmanager-inspector"><h2 class="btmanager-inspector-heading">Inspector</h2><div id="{uniqueID}_inspector" class="btmanager-inspector-content">Select a component to inspect its tree structure.</div></aside><section id="{uniqueID}_properties" class="btmanager-property-panel" hidden><h2 class="btmanager-property-heading">Attributes</h2><div id="{uniqueID}_property_content"></div></section></div>
+				<div class="btmanager-graph-panel"><div class="btmanager-runtime-toolbar"><button id="{uniqueID}_play" class="btmanager-runtime-control play" title="Run behavior tree" aria-label="Run behavior tree"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg></button><button id="{uniqueID}_debug" class="btmanager-runtime-control debug" title="Debug behavior tree" aria-label="Debug behavior tree"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" d="M5 6.5h6v6H5zM8 2v2M3 4.5l1.5 1M13 4.5l-1.5 1M3 8h1M12 8h1M3 12l1.5-1M13 12l-1.5-1"/><circle cx="6.7" cy="9.2" r=".7"/><circle cx="9.3" cy="9.2" r=".7"/></svg></button><button id="{uniqueID}_debug_tick" class="btmanager-runtime-control btmanager-debug-command" title="Tick once" disabled hidden>Tick</button><button id="{uniqueID}_debug_until" class="btmanager-runtime-control btmanager-debug-command" title="Tick until the selected node finishes" disabled hidden>Until selected</button><button id="{uniqueID}_debug_continue" class="btmanager-runtime-control btmanager-debug-command" title="Continue until the next breakpoint" disabled hidden>Continue</button><button id="{uniqueID}_stop" class="btmanager-runtime-control stop" title="Stop behavior tree" aria-label="Stop behavior tree" disabled><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9"/></svg></button></div><div id="{uniqueID}_tree" class="btmanager-tree">Select an XML file to inspect its behavior tree.</div><aside id="{uniqueID}_runtime_feedback" class="btmanager-runtime-feedback"><h2>Runtime states</h2><div>Waiting for action feedback…</div></aside><aside id="{uniqueID}_runtime_log" class="btmanager-runtime-log" hidden><header class="btmanager-runtime-log-header"><h2>Runtime log</h2><button id="{uniqueID}_runtime_log_clear" type="button">Clear</button></header><pre id="{uniqueID}_runtime_log_entries" class="btmanager-runtime-log-entries"></pre></aside><aside class="btmanager-inspector"><h2 class="btmanager-inspector-heading">Inspector</h2><div id="{uniqueID}_inspector" class="btmanager-inspector-content">Select a component to inspect its tree structure.</div></aside><section id="{uniqueID}_properties" class="btmanager-property-panel" hidden><h2 class="btmanager-property-heading">Attributes</h2><div id="{uniqueID}_property_content"></div></section></div>
 			</div>
 		</div>
 		<div class="btmanager-actions"><button id="{uniqueID}_undo" disabled>Undo</button><button id="{uniqueID}_redo" disabled>Redo</button><button id="{uniqueID}_save" disabled>Save</button><button id="{uniqueID}_validate" disabled>Validate</button><span id="{uniqueID}_save_status" aria-live="polite"></span></div>

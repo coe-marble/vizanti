@@ -22,6 +22,8 @@ const navigatorEndpointConfigurationContainer = document.getElementById(
 	'{uniqueID}_navigator_endpoint_configuration'
 );
 const blackboardInputsInput = document.getElementById('{uniqueID}_blackboard_inputs');
+const recordingModeInput = document.getElementById('{uniqueID}_recording_mode');
+const debugStartModeInput = document.getElementById('{uniqueID}_debug_start_mode');
 const githubUrlInput = document.getElementById('{uniqueID}_github_url');
 const githubRefInput = document.getElementById('{uniqueID}_github_ref');
 const githubSubdirectoryInput = document.getElementById('{uniqueID}_github_subdirectory');
@@ -33,7 +35,12 @@ const newSubtreeButton = document.getElementById('{uniqueID}_new_subtree');
 const deleteFileButton = document.getElementById('{uniqueID}_delete_file');
 const playButton = document.getElementById('{uniqueID}_play');
 const debugButton = document.getElementById('{uniqueID}_debug');
+const debugTickButton = document.getElementById('{uniqueID}_debug_tick');
+const debugUntilButton = document.getElementById('{uniqueID}_debug_until');
+const debugContinueButton = document.getElementById('{uniqueID}_debug_continue');
 const stopButton = document.getElementById('{uniqueID}_stop');
+
+debugUntilButton.title = 'Tick until the selected node starts';
 const createModal = document.getElementById('{uniqueID}_create_modal');
 const createTitle = document.getElementById('{uniqueID}_create_title');
 const createStatus = document.getElementById('{uniqueID}_create_status');
@@ -53,8 +60,17 @@ const graph = document.getElementById('{uniqueID}_graph');
 const tree = document.getElementById('{uniqueID}_tree');
 const textTabButton = document.getElementById('{uniqueID}_text_tab_button');
 const treeTabButton = document.getElementById('{uniqueID}_tree_tab_button');
+const runsTabButton = document.getElementById('{uniqueID}_runs_tab_button');
 const textTab = document.getElementById('{uniqueID}_text_tab');
 const treeTab = document.getElementById('{uniqueID}_tree_tab');
+const runsTab = document.getElementById('{uniqueID}_runs_tab');
+const runsList = document.getElementById('{uniqueID}_runs_list');
+const runsRefreshButton = document.getElementById('{uniqueID}_runs_refresh');
+const runsSummary = document.getElementById('{uniqueID}_runs_summary');
+const runsTimeline = document.getElementById('{uniqueID}_runs_timeline');
+const runsFrame = document.getElementById('{uniqueID}_runs_frame');
+const runsTree = document.getElementById('{uniqueID}_runs_tree');
+const runsLog = document.getElementById('{uniqueID}_runs_log');
 const workspace = treeTab.querySelector('.btmanager-workspace');
 const saveButton = document.getElementById('{uniqueID}_save');
 const validateButton = document.getElementById('{uniqueID}_validate');
@@ -70,6 +86,7 @@ const componentsToggle = document.getElementById('{uniqueID}_components_toggle')
 const componentsResize = document.getElementById('{uniqueID}_components_resize');
 const runtimeFeedback = document.getElementById('{uniqueID}_runtime_feedback');
 const runtimeLogToggle = document.getElementById('{uniqueID}_runtime_log_toggle');
+const runtimeBlackboardToggle = document.getElementById('{uniqueID}_runtime_blackboard_toggle');
 const runtimeLogPanel = document.getElementById('{uniqueID}_runtime_log');
 const runtimeLogEntries = document.getElementById('{uniqueID}_runtime_log_entries');
 const runtimeLogClear = document.getElementById('{uniqueID}_runtime_log_clear');
@@ -120,12 +137,24 @@ let runtimeMode = '';
 let runtimeStarting = false;
 let runtimeStopping = false;
 let activeRuntime = null;
+let activeRunRecord = null;
+let selectedRun = null;
+let runPlayback = null;
+let recordingMode = 'timeline';
+let debugStartMode = 'paused';
+let debugBreakpointsByFile = {};
+let selectedGraphRuntimePath = '';
+let runtimeDebugState = null;
+let runtimeBlackboardState = null;
 const runtimeNodeStates = new Map();
 const runtimeNodeStatesByPath = new Map();
 const runtimeNodePathsByUid = new Map();
 const runtimeLog = [];
 const MAX_RUNTIME_LOG_ENTRIES = 200;
+const MAX_RUN_RECORDING_BYTES = 48 * 1024 * 1024;
 let runtimeLogOpen = false;
+let runtimeBlackboardOpen = false;
+let runtimeDisplayFrame = null;
 let inspectedNode = null;
 let inspectedElement = null;
 let treeViewBox = '';
@@ -178,6 +207,18 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 			settings['{uniqueID}'].navigator_action
 		);
 	blackboardInputsInput.value = settings['{uniqueID}'].blackboard_inputs ?? '{}';
+	recordingMode = ['off', 'events', 'timeline'].includes(
+		settings['{uniqueID}'].run_recording_mode,
+	) ? settings['{uniqueID}'].run_recording_mode : 'timeline';
+	debugStartMode = settings['{uniqueID}'].debug_start_mode === 'breakpoint'
+		? 'breakpoint' : 'paused';
+	const storedBreakpoints = settings['{uniqueID}'].debug_breakpoints_by_file;
+	if (storedBreakpoints && typeof storedBreakpoints === 'object' && !Array.isArray(storedBreakpoints)) {
+		debugBreakpointsByFile = Object.fromEntries(Object.entries(storedBreakpoints)
+			.filter(([path, breakpoints]) => typeof path === 'string' && Array.isArray(breakpoints))
+			.map(([path, breakpoints]) => [path, [...new Set(breakpoints
+				.filter(value => typeof value === 'string' && value.length > 0 && value.length <= 1024))]]));
+	}
 	githubUrlInput.value = settings['{uniqueID}'].github_url ?? '';
 	githubRefInput.value = settings['{uniqueID}'].github_ref ?? 'main';
 	githubSubdirectoryInput.value = settings['{uniqueID}'].github_subdirectory ?? '';
@@ -187,12 +228,17 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 	componentsWidth = settings['{uniqueID}'].components_width ?? 0;
 }
 rootInput.value = rootPath;
+recordingModeInput.value = recordingMode;
+debugStartModeInput.value = debugStartMode;
 
 function saveSettings() {
 	settings['{uniqueID}'] = {
 		root_path: rootPath,
 		navigator_endpoint_configuration: navigatorEndpointConfiguration,
 		blackboard_inputs: blackboardInputsInput.value,
+		run_recording_mode: recordingMode,
+		debug_start_mode: debugStartMode,
+		debug_breakpoints_by_file: debugBreakpointsByFile,
 		github_url: githubUrlInput.value,
 		github_ref: githubRefInput.value,
 		github_subdirectory: githubSubdirectoryInput.value,
@@ -205,6 +251,14 @@ function saveSettings() {
 }
 
 blackboardInputsInput.addEventListener('input', saveSettings);
+recordingModeInput.addEventListener('change', () => {
+	recordingMode = recordingModeInput.value;
+	saveSettings();
+});
+debugStartModeInput.addEventListener('change', () => {
+	debugStartMode = debugStartModeInput.value === 'breakpoint' ? 'breakpoint' : 'paused';
+	saveSettings();
+});
 githubUrlInput.addEventListener('input', saveSettings);
 githubRefInput.addEventListener('input', saveSettings);
 githubSubdirectoryInput.addEventListener('input', saveSettings);
@@ -248,11 +302,80 @@ function setComponentsHidden(value) {
 	componentsToggle.setAttribute('aria-label', componentsToggle.title);
 }
 
+function debugBreakpointsForSelectedFile() {
+	if (!selectedPath) return new Set();
+	return new Set(debugBreakpointsByFile[selectedPath] || []);
+}
+
+function hasDebugBreakpoint(runtimePath, breakpoints = debugBreakpointsForSelectedFile()) {
+	return [...breakpoints].some(path => runtimePathsMatch(path, runtimePath));
+}
+
+async function toggleDebugBreakpoint(runtimePath) {
+	if (!selectedPath || !runtimePath) return;
+	if (runtimeMode && runtimeMode !== 'debug') {
+		status.setError('Breakpoints can only be changed during a debug run.');
+		return;
+	}
+	const breakpoints = debugBreakpointsForSelectedFile();
+	const adding = !hasDebugBreakpoint(runtimePath, breakpoints);
+	if (runtimeMode === 'debug') {
+		try {
+			const response = await sendDebugControl(adding ? 4 : 5, '', [runtimePath]);
+			const activeBreakpoints = Array.isArray(response.active_breakpoint_paths)
+				? response.active_breakpoint_paths.filter(path => typeof path === 'string') : null;
+			if (activeBreakpoints) {
+				breakpoints.clear();
+				activeBreakpoints.forEach(path => breakpoints.add(path));
+			}
+			logRuntime('info', `Breakpoint ${adding ? 'added' : 'removed'}: ${runtimePath}.`);
+		} catch (error) {
+			const message = errorMessage(error);
+			status.setError(`Unable to ${adding ? 'add' : 'remove'} breakpoint: ${message}`);
+			logRuntime('error', `Unable to ${adding ? 'add' : 'remove'} breakpoint: ${message}`);
+			return;
+		}
+	}
+	if (runtimeMode !== 'debug') {
+		if (adding) breakpoints.add(runtimePath);
+		else {
+			for (const path of breakpoints) {
+				if (runtimePathsMatch(path, runtimePath)) breakpoints.delete(path);
+			}
+		}
+	}
+	if (breakpoints.size === 0) delete debugBreakpointsByFile[selectedPath];
+	else debugBreakpointsByFile[selectedPath] = [...breakpoints].sort();
+	saveSettings();
+	renderGraphPreservingView(editor.value);
+}
+
+function runtimePathsMatch(left, right) {
+	const leftPath = runtimePathSegments(left).join('/');
+	const rightPath = runtimePathSegments(right).join('/');
+	return leftPath === rightPath || leftPath.endsWith(`/${rightPath}`) || rightPath.endsWith(`/${leftPath}`);
+}
+
 function updateRuntimeControls() {
 	const active = Boolean(runtimeMode) || runtimeStarting;
+	const debugging = runtimeMode === 'debug' && Boolean(activeRuntime);
+	const paused = debugging && runtimeDebugState?.paused === true && !runtimeStopping;
+	const selectedNode = selectedGraphRuntimePath
+		? tree.querySelector(`.btmanager-tree-node[data-runtime-path="${CSS.escape(selectedGraphRuntimePath)}"]`)
+		: null;
 	playButton.disabled = active || !selectedPath;
 	debugButton.disabled = active || !selectedPath;
 	stopButton.disabled = !activeRuntime || runtimeStarting || runtimeStopping;
+	debugTickButton.hidden = !debugging;
+	debugUntilButton.hidden = !debugging;
+	debugContinueButton.hidden = !debugging;
+	runtimeBlackboardToggle.hidden = !debugging;
+	runtimeBlackboardToggle.disabled = !debugging;
+	if (!debugging) setRuntimeBlackboardOpen(false);
+	debugTickButton.disabled = !paused;
+	debugUntilButton.disabled = !paused || !selectedGraphRuntimePath || selectedNode?.classList.contains('root-node');
+	debugContinueButton.disabled = !paused;
+	runsTabButton.disabled = active;
 	newButton.disabled = active;
 	openButton.disabled = active;
 	fileList.disabled = active || !rootPath;
@@ -325,6 +448,12 @@ function updateRuntimeGraphStates() {
 		const state = runtimeStateForPath(node.dataset.runtimePath);
 		node.classList.remove('runtime-idle', 'runtime-running', 'runtime-success', 'runtime-failure');
 		node.classList.add(`runtime-${state.toLowerCase()}`);
+		node.classList.toggle(
+			'debug-paused-node',
+			runtimeMode === 'debug' && runtimeDebugState?.paused === true
+				&& Boolean(runtimeDebugState.node_path)
+				&& runtimePathsMatch(node.dataset.runtimePath, runtimeDebugState.node_path),
+		);
 		const type = node.querySelector('.btmanager-tree-node-type');
 		if (type?.dataset.runtimeLabel) {
 			type.textContent = `${type.dataset.runtimeLabel} · ${state}`;
@@ -339,58 +468,491 @@ function setRuntimeLogOpen(open) {
 	runtimeLogToggle.textContent = open ? 'Hide log' : 'Log';
 }
 
+function setRuntimeBlackboardOpen(open) {
+	const visible = Boolean(open) && runtimeMode === 'debug' && Boolean(activeRuntime);
+	runtimeBlackboardOpen = visible;
+	runtimeFeedback.hidden = !visible;
+	runtimeBlackboardToggle.setAttribute('aria-expanded', String(visible));
+	runtimeBlackboardToggle.textContent = visible ? 'Hide blackboard' : 'Blackboard';
+	if (visible) updateRuntimeFeedback();
+}
+
 function renderRuntimeLog() {
 	const wasAtBottom = runtimeLogEntries.scrollTop + runtimeLogEntries.clientHeight
 		>= runtimeLogEntries.scrollHeight - 4;
 	runtimeLogEntries.replaceChildren();
-	runtimeLog.forEach(entry => {
-		const line = document.createElement('span');
-		line.className = `btmanager-runtime-log-entry ${entry.level}`;
-		line.textContent = `[${entry.time}] ${entry.message}`;
-		runtimeLogEntries.appendChild(line);
-	});
+	runtimeLog.forEach(appendRuntimeLogEntry);
 	if (wasAtBottom) runtimeLogEntries.scrollTop = runtimeLogEntries.scrollHeight;
+}
+
+function appendRuntimeLogEntry(entry) {
+	const line = document.createElement('span');
+	line.className = `btmanager-runtime-log-entry ${entry.level}`;
+	line.textContent = `[${entry.time}] ${entry.message}`;
+	runtimeLogEntries.appendChild(line);
 }
 
 function logRuntime(level, message) {
 	const time = new Date().toISOString().slice(11, 23);
-	runtimeLog.push({ level, time, message: String(message) });
+	const entry = { level, time, message: String(message) };
+	const wasAtBottom = runtimeLogEntries.scrollTop + runtimeLogEntries.clientHeight
+		>= runtimeLogEntries.scrollHeight - 4;
+	runtimeLog.push(entry);
 	if (runtimeLog.length > MAX_RUNTIME_LOG_ENTRIES) runtimeLog.shift();
+	recordRunEvent(activeRunRecord, {
+		type: 'log',
+		at: new Date().toISOString(),
+		level,
+		message: String(message),
+	});
 	if (level === 'error') setRuntimeLogOpen(true);
-	renderRuntimeLog();
+	appendRuntimeLogEntry(entry);
+	if (runtimeLogEntries.childElementCount > MAX_RUNTIME_LOG_ENTRIES) {
+		runtimeLogEntries.firstElementChild?.remove();
+	}
+	if (wasAtBottom) runtimeLogEntries.scrollTop = runtimeLogEntries.scrollHeight;
 }
 
 function errorMessage(error) {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function encodedSize(value) {
+	return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function createRunRecord(mode) {
+	if (recordingMode === 'off') return null;
+	const record = {
+		version: 1,
+		id: '',
+		metadata: {
+			path: selectedPath,
+			mode,
+			debug_start_mode: mode === 'debug' ? debugStartMode : undefined,
+			breakpoint_paths: mode === 'debug' ? [...debugBreakpointsForSelectedFile()] : undefined,
+			recording_mode: recordingMode,
+			started_at: new Date().toISOString(),
+			tree_xml: editor.value,
+		},
+		events: [],
+		outcome: null,
+		truncated: false,
+		estimatedBytes: 0,
+		finalized: false,
+	};
+	record.estimatedBytes = encodedSize({
+		version: record.version,
+		metadata: record.metadata,
+		events: record.events,
+		outcome: record.outcome,
+		truncated: record.truncated,
+	});
+	return record;
+}
+
+function recordRunEvent(record, event) {
+	if (!record || record.finalized || record.truncated) return;
+	const eventBytes = encodedSize(event) + 1;
+	if (record.estimatedBytes + eventBytes > MAX_RUN_RECORDING_BYTES) {
+		record.truncated = true;
+		logRuntime('warning', 'Run recording reached its 48 MiB limit; later snapshots were omitted.');
+		return;
+	}
+	record.events.push(event);
+	record.estimatedBytes += eventBytes;
+}
+
+function attachRunBundle(record, bundle) {
+	if (!record || !bundle || !Array.isArray(bundle.files)) return;
+	const savedBundle = {
+		entry_path: String(bundle.entry_path || selectedPath),
+		files: bundle.files
+			.filter(file => typeof file?.path === 'string' && typeof file?.content === 'string')
+			.map(file => ({ path: file.path, content: file.content })),
+	};
+	const previousMetadataBytes = encodedSize(record.metadata);
+	record.metadata.bundle = savedBundle;
+	const nextMetadataBytes = encodedSize(record.metadata);
+	if (record.estimatedBytes + nextMetadataBytes - previousMetadataBytes
+		> MAX_RUN_RECORDING_BYTES) {
+		delete record.metadata.bundle;
+		record.metadata.bundle_omitted = true;
+		logRuntime('warning', 'Run tree bundle is too large to include in the recording.');
+		return;
+	}
+	record.estimatedBytes += nextMetadataBytes - previousMetadataBytes;
+}
+
+function serializableRunRecord(record) {
+	return {
+		version: record.version,
+		id: record.id,
+		metadata: record.metadata,
+		events: record.events,
+		outcome: record.outcome,
+		truncated: record.truncated,
+	};
+}
+
+async function createRunFile(record) {
+	if (!record) return;
+	try {
+		const response = await request('/bt/runs', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ metadata: record.metadata }),
+		});
+		record.id = response.id;
+	} catch (error) {
+		console.warn('Unable to create behavior-tree run recording:', errorMessage(error));
+	}
+}
+
+async function finishRunRecording(record, outcome) {
+	if (!record || record.finalized) return;
+	record.outcome = outcome;
+	record.metadata.finished_at = new Date().toISOString();
+	record.finalized = true;
+	if (activeRunRecord === record) activeRunRecord = null;
+	if (!record.id) return;
+	try {
+		await request(`/bt/runs/${encodeURIComponent(record.id)}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(serializableRunRecord(record)),
+		});
+	} catch (error) {
+		console.warn('Unable to save behavior-tree run recording:', errorMessage(error));
+	}
+}
+
+function runLabel(run) {
+	const startedAt = run.started_at ? new Date(run.started_at).toLocaleString() : 'Unknown time';
+	const outcome = run.outcome?.status || 'in progress';
+	const truncated = run.truncated ? ' · truncated' : '';
+	return `${startedAt} · ${run.path || 'Unnamed tree'} · ${outcome}${truncated}`;
+}
+
+function runTreeXml(run) {
+	if (typeof run?.metadata?.tree_xml === 'string') return run.metadata.tree_xml;
+	const bundle = run?.metadata?.bundle;
+	if (!bundle || !Array.isArray(bundle.files)) return '';
+	const entry = bundle.files.find(file => file?.path === bundle.entry_path);
+	return typeof entry?.content === 'string' ? entry.content : '';
+}
+
+function runTreeDefinitions(run) {
+	const definitions = new Map();
+	const files = run?.metadata?.bundle?.files;
+	if (!Array.isArray(files)) return definitions;
+	files.forEach(file => {
+		if (typeof file?.path !== 'string' || typeof file?.content !== 'string') return;
+		const documentRoot = new DOMParser().parseFromString(file.content, 'application/xml');
+		if (documentRoot.querySelector('parsererror')) return;
+		Array.from(documentRoot.querySelectorAll('root > BehaviorTree[ID], root > BehaviorTree[id]'))
+			.forEach(definition => {
+				const id = definition.getAttribute('ID') || definition.getAttribute('id');
+				if (id && !definitions.has(id)) {
+					definitions.set(id, {
+						element: definition,
+						readOnly: true,
+						sourcePath: file.path,
+					});
+				}
+			});
+	});
+	return definitions;
+}
+
+function createRunPlayback(run) {
+	const nodePaths = new Map();
+	const rawSnapshots = [];
+	for (const event of run.events || []) {
+		if (event?.type === 'node_map'
+			&& Array.isArray(event.node_uids)
+			&& Array.isArray(event.node_paths)
+			&& event.node_uids.length === event.node_paths.length) {
+			event.node_uids.forEach((uid, index) => {
+				nodePaths.set(String(uid), String(event.node_paths[index]));
+			});
+		}
+		if (event?.type === 'snapshot'
+			&& Array.isArray(event.node_uids)
+			&& Array.isArray(event.node_states)
+			&& event.node_uids.length === event.node_states.length) {
+			rawSnapshots.push(event);
+		}
+	}
+	const snapshots = [];
+	const states = new Map();
+	let active;
+	rawSnapshots.forEach(snapshot => {
+		const previousStates = new Map(states);
+		if (isFullRunSnapshot(run, snapshot)) states.clear();
+		snapshot.node_uids.forEach((uid, index) => {
+			states.set(String(uid), Number(snapshot.node_states[index]));
+		});
+		const nextActive = snapshot.source === 'state' ? snapshot.active !== false : active;
+		const changes = describeRunStateChanges(previousStates, states, nodePaths);
+		const previous = snapshots[snapshots.length - 1];
+		if (changes.length === 0 && nextActive === active && previous) {
+			previous.rawCount += 1;
+			previous.lastAt = snapshot.at;
+			return;
+		}
+		snapshots.push({
+			...snapshot,
+			rawCount: 1,
+			lastAt: snapshot.at,
+			effectiveStates: new Map(states),
+			changes,
+		});
+		active = nextActive;
+	});
+	return {
+		run,
+		nodePaths,
+		snapshots,
+		rawSnapshotCount: rawSnapshots.length,
+		states: new Map(),
+		frameIndex: -1,
+		sourceTreeDefinitions: new Map(includedTreeDefinitions),
+		sourceIncludedSubtrees: includedSubtrees,
+		sourceTreeViewBox: treeViewBox,
+	};
+}
+
+function isFullRunSnapshot(run, snapshot) {
+	return snapshot.source === 'state'
+		|| (snapshot.source === 'feedback' && run.metadata?.mode === 'debug');
+}
+
+function describeRunStateChanges(previousStates, states, nodePaths) {
+	const nodeUids = new Set([...previousStates.keys(), ...states.keys()]);
+	const changes = [];
+	nodeUids.forEach(uid => {
+		const before = previousStates.get(uid);
+		const after = states.get(uid);
+		if (before === after) return;
+		const label = nodePaths.get(uid) || `Node ${uid}`;
+		const beforeLabel = before === undefined ? 'unreported' : nodeStateName(before);
+		const afterLabel = after === undefined ? 'unreported' : nodeStateName(after);
+		changes.push(`${label}: ${beforeLabel} → ${afterLabel}`);
+	});
+	return changes;
+}
+
+function runFrameChanges(playback, frameIndex) {
+	if (frameIndex === 0) return 'Initial snapshot.';
+	const changes = playback.snapshots[frameIndex].changes;
+	if (changes.length === 0) return 'Execution activity changed without a node-state change.';
+	const shownChanges = changes.slice(0, 12);
+	if (changes.length > shownChanges.length) {
+		shownChanges.push(`… and ${changes.length - shownChanges.length} more.`);
+	}
+	return `Changes from previous: ${shownChanges.join('; ')}`;
+}
+
+function resetRunTreeState() {
+	runtimeNodeStates.clear();
+	runtimeNodeStatesByPath.clear();
+	runtimeNodePathsByUid.clear();
+}
+
+function restoreRunReplayTree() {
+	if (!runPlayback) return;
+	includedTreeDefinitions.clear();
+	runPlayback.sourceTreeDefinitions.forEach((definition, id) => {
+		includedTreeDefinitions.set(id, definition);
+	});
+	includedSubtrees = runPlayback.sourceIncludedSubtrees;
+	treeViewBox = runPlayback.sourceTreeViewBox;
+	resetRunTreeState();
+	panel.classList.remove('btmanager-run-replay-mode');
+	runPlayback = null;
+	if (!editor.value) return;
+	try {
+		renderGraph(editor.value);
+	} catch (error) {
+		graph.textContent = errorMessage(error);
+	}
+}
+
+function resetRunPreview(message = 'Select a recorded run to inspect it.') {
+	selectedRun = null;
+	runsTimeline.value = '0';
+	runsTimeline.max = '0';
+	runsTimeline.disabled = true;
+	runsFrame.textContent = '—';
+	runsSummary.textContent = message;
+	runsTree.textContent = 'Select a recorded run to replay its tree.';
+	runsLog.textContent = 'Run logs appear here.';
+}
+
+function applyRunFrameState(playback, frameIndex) {
+	const snapshot = playback.snapshots[frameIndex];
+	if (!snapshot) return null;
+	playback.states = new Map(snapshot.effectiveStates);
+	playback.frameIndex = frameIndex;
+	return snapshot;
+}
+
+function lastMeaningfulRunFrameIndex(snapshots) {
+	for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+		if ([...snapshots[index].effectiveStates.values()].some(state => state !== 0)) return index;
+	}
+	return Math.max(0, snapshots.length - 1);
+}
+
+function renderRunLog(run) {
+	const entries = (run.events || []).filter(event => event?.type === 'log');
+	runsLog.textContent = entries.length === 0 ? 'No runtime logs were saved.' : entries
+		.map(entry => {
+			const timestamp = entry.at ? new Date(entry.at).toLocaleTimeString() : '—';
+			return `[${timestamp}] ${String(entry.message || '')}`;
+		})
+		.join('\n');
+}
+
+function renderRunFrame(frameIndex) {
+	if (!runPlayback) return;
+	const frame = applyRunFrameState(runPlayback, frameIndex);
+	if (!frame) return;
+	resetRunTreeState();
+	runPlayback.nodePaths.forEach((path, uid) => runtimeNodePathsByUid.set(uid, path));
+	runPlayback.states.forEach((state, uid) => {
+		const nodePath = runtimeNodePathsByUid.get(uid) || '';
+		const stateName = nodeStateName(state);
+		runtimeNodeStates.set(uid, { nodeUid: uid, nodePath, state: stateName });
+		if (nodePath) runtimeNodeStatesByPath.set(nodePath, stateName);
+	});
+	updateRuntimeGraphStates();
+	const canvas = tree.querySelector('.btmanager-tree-canvas');
+	if (canvas) runsTree.replaceChildren(canvas.cloneNode(true));
+	else runsTree.textContent = 'The saved tree could not be rendered.';
+	const outcome = selectedRun?.outcome?.status || 'in progress';
+	const detail = selectedRun?.outcome?.error_message;
+	const truncated = selectedRun?.truncated ? 'Recording was truncated at 48 MiB.' : '';
+	const trailingIdleSnapshots = runPlayback.snapshots
+		.slice(frameIndex + 1)
+		.reduce((total, snapshot) => total + snapshot.rawCount, 0);
+	runsSummary.textContent = [
+		`Tree: ${selectedRun?.metadata?.path || 'Unnamed tree'}`,
+		`Outcome: ${outcome}${detail ? ` — ${detail}` : ''}`,
+		`Recording: ${selectedRun?.metadata?.recording_mode || 'unknown'} · ${runPlayback.rawSnapshotCount} raw snapshots · ${runPlayback.snapshots.length} displayed state changes`,
+		runFrameChanges(runPlayback, frameIndex),
+		trailingIdleSnapshots > 0
+			? `Showing the final active frame; ${trailingIdleSnapshots} later idle snapshot${trailingIdleSnapshots === 1 ? '' : 's'} retained.`
+			: '',
+		truncated,
+	].filter(Boolean).join('\n');
+	runsFrame.textContent = `${frameIndex + 1}/${runPlayback.snapshots.length} · ${frame.rawCount} raw snapshot${frame.rawCount === 1 ? '' : 's'} · ${frame.lastAt ? new Date(frame.lastAt).toLocaleTimeString() : '—'}`;
+}
+
+async function loadRun(runId) {
+	restoreRunReplayTree();
+	if (!runId) {
+		resetRunPreview();
+		return;
+	}
+	runsSummary.textContent = 'Loading run…';
+	try {
+		const run = await request(`/bt/runs/${encodeURIComponent(runId)}`);
+		if (!Array.isArray(run.events) || !run.metadata || typeof run.metadata !== 'object') {
+			throw new Error('Saved run has an invalid format.');
+		}
+		const xml = runTreeXml(run);
+		if (!xml) throw new Error('Saved run does not contain a behavior tree.');
+		selectedRun = run;
+		runPlayback = createRunPlayback(run);
+		includedTreeDefinitions.clear();
+		runTreeDefinitions(run).forEach((definition, id) => includedTreeDefinitions.set(id, definition));
+		treeViewBox = '';
+		panel.classList.add('btmanager-run-replay-mode');
+		renderGraph(xml);
+		renderRunLog(run);
+		if (runPlayback.snapshots.length === 0) {
+			runsTimeline.value = '0';
+			runsTimeline.max = '0';
+			runsTimeline.disabled = true;
+			runsFrame.textContent = 'No state snapshots';
+			runsTree.replaceChildren(tree.querySelector('.btmanager-tree-canvas')?.cloneNode(true)
+				|| document.createTextNode('The saved tree could not be rendered.'));
+			runsSummary.textContent = `Tree: ${run.metadata.path || 'Unnamed tree'}\nNo state snapshots were saved.`;
+			return;
+		}
+		runsTimeline.max = String(runPlayback.snapshots.length - 1);
+		runsTimeline.value = String(lastMeaningfulRunFrameIndex(runPlayback.snapshots));
+		runsTimeline.disabled = false;
+		renderRunFrame(Number(runsTimeline.value));
+	} catch (error) {
+		restoreRunReplayTree();
+		resetRunPreview(`Unable to load run: ${errorMessage(error)}`);
+	}
+}
+
+async function loadRuns() {
+	const selectedId = runsList.value || selectedRun?.id || '';
+	runsRefreshButton.disabled = true;
+	try {
+		const response = await request('/bt/runs');
+		const runs = Array.isArray(response.runs) ? response.runs : [];
+		runsList.replaceChildren();
+		const placeholder = document.createElement('option');
+		placeholder.value = '';
+		placeholder.textContent = runs.length === 0 ? 'No recorded runs' : 'Select a recorded run';
+		runsList.appendChild(placeholder);
+		runs.forEach(run => {
+			const option = document.createElement('option');
+			option.value = run.id;
+			option.textContent = runLabel(run);
+			option.selected = run.id === selectedId;
+			runsList.appendChild(option);
+		});
+		if (selectedId && !runs.some(run => run.id === selectedId)) {
+			restoreRunReplayTree();
+			resetRunPreview('The selected run is no longer available.');
+		} else if (selectedId && (!runPlayback || selectedRun?.id !== selectedId)) {
+			void loadRun(selectedId);
+		}
+	} catch (error) {
+		runsSummary.textContent = `Unable to load recorded runs: ${errorMessage(error)}`;
+	} finally {
+		runsRefreshButton.disabled = false;
+	}
+}
+
 function updateRuntimeFeedback() {
-	if (!runtimeMode) {
-		runtimeFeedback.textContent = '';
+	if (runtimeMode !== 'debug' || !runtimeBlackboardOpen) {
+		runtimeFeedback.hidden = true;
 		return;
 	}
 
+	runtimeFeedback.hidden = false;
 	runtimeFeedback.replaceChildren();
 	const heading = document.createElement('h2');
-	heading.textContent = 'Runtime states';
+	heading.textContent = 'Blackboard';
 	runtimeFeedback.appendChild(heading);
-	if (runtimeNodeStates.size === 0) {
-		const waiting = document.createElement('div');
-		waiting.textContent = 'Waiting for action feedback…';
-		runtimeFeedback.appendChild(waiting);
-		return;
+	const blackboard = document.createElement('pre');
+	blackboard.className = 'btmanager-runtime-blackboard';
+	if (runtimeBlackboardState?.error) {
+		blackboard.textContent = `Unavailable: ${runtimeBlackboardState.error}`;
+	} else if (runtimeBlackboardState?.values !== undefined) {
+		blackboard.textContent = JSON.stringify(runtimeBlackboardState.values, null, 2);
+	} else {
+		blackboard.textContent = 'Waiting for blackboard state…';
 	}
+	runtimeFeedback.appendChild(blackboard);
+}
 
-	const states = document.createElement('ul');
-	[...runtimeNodeStates.values()]
-		.sort((left, right) => Number(left.nodeUid) - Number(right.nodeUid))
-		.forEach(node => {
-			const item = document.createElement('li');
-			item.className = node.state.toLowerCase();
-			item.textContent = `Node ${node.nodeUid}: ${node.state}`;
-			states.appendChild(item);
-		});
-	runtimeFeedback.appendChild(states);
+function scheduleRuntimeDisplay() {
+	if (runtimeDisplayFrame !== null) return;
+	runtimeDisplayFrame = requestAnimationFrame(() => {
+		runtimeDisplayFrame = null;
+		updateRuntimeGraphStates();
+		updateRuntimeFeedback();
+	});
 }
 
 function renderGraphPreservingView(xml) {
@@ -442,6 +1004,7 @@ function clearSelectedFile() {
 	runtimeMode = '';
 	panel.classList.remove('btmanager-runtime-mode');
 	selectedPath = '';
+	selectedGraphRuntimePath = '';
 	revision = '';
 	savedContent = '';
 	includedSubtrees = [];
@@ -678,6 +1241,7 @@ function renderTreeCanvas(documentRoot) {
 	let selectedTreeNode = null;
 	const selectTreeNode = node => {
 		selectedTreeNode = node;
+		selectedGraphRuntimePath = node.runtimePath;
 		nodeElements.forEach((element, candidate) => element.classList.toggle('selected', candidate === node));
 		const component = nodeCatalog.find(item => item.name === node.element.tagName);
 		renderInspector({
@@ -688,6 +1252,7 @@ function renderTreeCanvas(documentRoot) {
 			structure: describeTreeStructure(node),
 		}, node.element);
 		svg.focus({ preventScroll: true });
+		updateRuntimeControls();
 	};
 	const childPolicyFor = node => {
 		const component = nodeCatalog.find(candidate => candidate.name === node.element.tagName);
@@ -839,6 +1404,10 @@ function renderTreeCanvas(documentRoot) {
 		group.classList.add('btmanager-tree-node');
 		group.dataset.runtimePath = node.runtimePath;
 		if (runtimeMode) group.classList.add(`runtime-${runtimeStateFor(node).toLowerCase()}`);
+		if (runtimeMode === 'debug' && runtimeDebugState?.paused && runtimeDebugState.node_path &&
+			runtimePathsMatch(node.runtimePath, runtimeDebugState.node_path)) {
+			group.classList.add('debug-paused-node');
+		}
 		if (canAcceptChild(node)) group.classList.add('can-receive');
 		if (node.parent === null) group.classList.add('root-node');
 		if (node.readOnly) group.classList.add('read-only-node');
@@ -859,6 +1428,32 @@ function renderTreeCanvas(documentRoot) {
 		type.dataset.runtimeLabel = typeLabel;
 		type.textContent = runtimeMode ? `${typeLabel} · ${runtimeStateFor(node)}` : typeLabel;
 		group.append(rectangle, label, type);
+		const breakpoint = document.createElementNS(svgNamespace, 'g');
+		breakpoint.classList.add('btmanager-breakpoint-toggle');
+		if (hasDebugBreakpoint(node.runtimePath)) breakpoint.classList.add('active');
+		const breakpointTitle = document.createElementNS(svgNamespace, 'title');
+		breakpointTitle.textContent = node.parent === null
+			? 'Use Start paused to pause at the tree root'
+			: 'Toggle breakpoint';
+		const breakpointCircle = document.createElementNS(svgNamespace, 'circle');
+		breakpointCircle.setAttribute('cx', '165');
+		breakpointCircle.setAttribute('cy', '45');
+		breakpointCircle.setAttribute('r', '8');
+		const breakpointLabel = document.createElementNS(svgNamespace, 'text');
+		breakpointLabel.setAttribute('x', '162');
+		breakpointLabel.setAttribute('y', '49');
+		breakpointLabel.textContent = '•';
+		breakpoint.append(breakpointTitle, breakpointCircle, breakpointLabel);
+		breakpoint.addEventListener('pointerdown', event => {
+			event.preventDefault();
+			event.stopPropagation();
+			if (node.parent === null) {
+				status.setError('Use Debug start: Start paused to pause at the behavior-tree root.');
+				return;
+			}
+			void toggleDebugBreakpoint(node.runtimePath);
+		});
+		group.appendChild(breakpoint);
 		if (canReplace(node)) {
 			group.addEventListener('dragover', event => {
 				if (!event.dataTransfer.types.includes('application/x-btmanager-component')) return;
@@ -1144,12 +1739,19 @@ function renderPropertyEditor(node, element) {
 
 function selectTab(tab) {
 	const showText = tab === 'text';
+	const showRuns = tab === 'runs';
+	const showTree = !showText && !showRuns;
+	if (!showRuns) restoreRunReplayTree();
 	textTab.hidden = !showText;
-	treeTab.hidden = showText;
+	treeTab.hidden = !showTree;
+	runsTab.hidden = !showRuns;
 	textTabButton.classList.toggle('active-tab', showText);
-	treeTabButton.classList.toggle('active-tab', !showText);
+	treeTabButton.classList.toggle('active-tab', showTree);
+	runsTabButton.classList.toggle('active-tab', showRuns);
 	textTabButton.setAttribute('aria-selected', String(showText));
-	treeTabButton.setAttribute('aria-selected', String(!showText));
+	treeTabButton.setAttribute('aria-selected', String(showTree));
+	runsTabButton.setAttribute('aria-selected', String(showRuns));
+	if (showRuns) void loadRuns();
 }
 
 function setComponentDragState(active) {
@@ -1239,6 +1841,7 @@ async function loadFile(path) {
 	try {
 		includedSubtrees = [];
 		treeViewBox = '';
+		selectedGraphRuntimePath = '';
 		const data = await request(`/bt/file/${encodeURIComponent(path).replace(/%2F/g, '/')}`);
 		selectedPath = data.path;
 		fileList.value = selectedPath;
@@ -1469,9 +2072,11 @@ function parseBlackboardInputs() {
 }
 
 function disposeRuntime(runtime) {
-	runtime.action.dispose();
-	runtime.stateSubscription.unsubscribe();
-	runtime.nodeMapSubscription.unsubscribe();
+	runtime.action?.dispose();
+	runtime.stateSubscription?.unsubscribe();
+	runtime.nodeMapSubscription?.unsubscribe();
+	runtime.debugStateSubscription?.unsubscribe();
+	runtime.blackboardSubscription?.unsubscribe();
 }
 
 function finishRuntime(runtime, result) {
@@ -1479,6 +2084,8 @@ function finishRuntime(runtime, result) {
 	disposeRuntime(runtime);
 	activeRuntime = null;
 	runtimeStopping = false;
+	runtimeDebugState = null;
+	runtimeBlackboardState = null;
 	setRuntimeMode('');
 	updateRuntimeControls();
 	const errorCode = result?.result?.error_code ?? 0;
@@ -1487,11 +2094,23 @@ function finishRuntime(runtime, result) {
 		logRuntime('info', 'Behavior tree completed successfully.');
 		setRuntimeLogOpen(true);
 		status.setOK('Behavior tree completed successfully.');
+		void finishRunRecording(runtime.record, {
+			status: 'succeeded',
+			action_status: result.status,
+			error_code: errorCode,
+			error_message: errorMessage,
+		});
 		return;
 	}
 	const detail = errorMessage || `action status ${result?.status ?? 'unknown'}`;
 	logRuntime('error', `Behavior tree finished: ${detail}`);
 	status.setError(`Behavior tree finished: ${detail}`);
+	void finishRunRecording(runtime.record, {
+		status: 'failed',
+		action_status: result?.status ?? null,
+		error_code: errorCode,
+		error_message: detail,
+	});
 }
 
 function asNumericArray(value) {
@@ -1525,6 +2144,8 @@ function applyRuntimeSnapshot(runtime, snapshot, source) {
 	runtime.action.markActive();
 	let changed = false;
 	const changes = [];
+	const changedNodeUids = [];
+	const changedNodeStates = [];
 	for (let index = 0; index < nodeUids.length; index += 1) {
 		const nodeUid = String(nodeUids[index]);
 		const nextState = nodeStateName(nodeStates[index]);
@@ -1539,13 +2160,33 @@ function applyRuntimeSnapshot(runtime, snapshot, source) {
 			});
 			if (nodePath) runtimeNodeStatesByPath.set(nodePath, nextState);
 			changes.push(`${nodeUid}=${nextState}`);
+			changedNodeUids.push(Number(nodeUids[index]));
+			changedNodeStates.push(Number(nodeStates[index]));
 			changed = true;
 		}
 	}
+	if (runtime.record?.metadata.recording_mode === 'timeline') {
+		recordRunEvent(runtime.record, {
+			type: 'snapshot',
+			at: new Date().toISOString(),
+			source: source.toLowerCase(),
+			active: snapshot.active !== false,
+			node_uids: nodeUids.map(value => Number(value)),
+			node_states: nodeStates.map(value => Number(value)),
+		});
+	} else if (changed) {
+		recordRunEvent(runtime.record, {
+			type: 'snapshot',
+			at: new Date().toISOString(),
+			source: source.toLowerCase(),
+			active: snapshot.active !== false,
+			node_uids: changedNodeUids,
+			node_states: changedNodeStates,
+		});
+	}
 	if (!changed) return;
 	logRuntime('info', `${source}: ${changes.join(', ')}`);
-	updateRuntimeGraphStates();
-	updateRuntimeFeedback();
+	scheduleRuntimeDisplay();
 }
 
 function applyRuntimeNodeMap(runtime, nodeMap) {
@@ -1566,6 +2207,12 @@ function applyRuntimeNodeMap(runtime, nodeMap) {
 		changed = true;
 	}
 	if (!changed) return;
+	recordRunEvent(runtime.record, {
+		type: 'node_map',
+		at: new Date().toISOString(),
+		node_uids: nodeUids.map(value => Number(value)),
+		node_paths: nodePaths.map(path => String(path)),
+	});
 	runtimeNodeStatesByPath.clear();
 	for (const nodeState of runtimeNodeStates.values()) {
 		nodeState.nodePath = runtimeNodePathsByUid.get(nodeState.nodeUid) || '';
@@ -1574,8 +2221,61 @@ function applyRuntimeNodeMap(runtime, nodeMap) {
 		}
 	}
 	logRuntime('info', `Received node map with ${nodeUids.length} nodes.`);
+	scheduleRuntimeDisplay();
+}
+
+function decodeRuntimeJsonMessage(message, label) {
+	const data = typeof message === 'string' ? message : message?.data;
+	if (data && typeof data === 'object') return data;
+	if (typeof data !== 'string') {
+		logRuntime('warning', `${label} message was not a JSON string.`);
+		return null;
+	}
+	try {
+		const payload = JSON.parse(data);
+		return payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
+	} catch {
+		logRuntime('warning', `${label} message contained invalid JSON.`);
+		return null;
+	}
+}
+
+function applyRuntimeDebugState(runtime, message) {
+	const payload = decodeRuntimeJsonMessage(message, 'Debug state');
+	if (!payload || payload.deployment_id !== runtime.deploymentId) return;
+	const nextState = {
+		paused: payload.paused === true,
+		node_path: typeof payload.node_path === 'string' ? payload.node_path : '',
+		reason: typeof payload.reason === 'string' ? payload.reason : '',
+	};
+	const changed = !runtimeDebugState
+		|| runtimeDebugState.paused !== nextState.paused
+		|| runtimeDebugState.node_path !== nextState.node_path
+		|| runtimeDebugState.reason !== nextState.reason;
+	runtimeDebugState = nextState;
+	runtime.action.markActive();
+	if (changed && nextState.paused) {
+		logRuntime('info', `Debug paused at ${nextState.node_path || 'the current node'}${
+			nextState.reason ? ` (${nextState.reason.replace(/_/g, ' ')})` : ''}.`);
+		status.setOK(`Debug paused at ${nextState.node_path || 'the current node'}.`);
+	} else if (changed) {
+		status.setOK('Debug running.');
+	}
 	updateRuntimeGraphStates();
 	updateRuntimeFeedback();
+	updateRuntimeControls();
+}
+
+function applyRuntimeBlackboardState(runtime, message) {
+	const payload = decodeRuntimeJsonMessage(message, 'Blackboard');
+	if (!payload || payload.deployment_id !== runtime.deploymentId) return;
+	runtimeBlackboardState = {
+		values: payload.values,
+		error: typeof payload.error === 'string' ? payload.error : '',
+		active: payload.active === true,
+	};
+	runtime.action.markActive();
+	scheduleRuntimeDisplay();
 }
 
 async function startRuntime(mode) {
@@ -1589,7 +2289,12 @@ async function startRuntime(mode) {
 		status.setError('Save the behavior tree before starting runtime.');
 		return;
 	}
+	let runRecord = null;
 	runtimeStarting = true;
+	runRecord = createRunRecord(mode);
+	activeRunRecord = runRecord;
+	await createRunFile(runRecord);
+	if (mode === 'debug') setRuntimeLogOpen(true);
 	logRuntime('info', `Starting ${mode} for ${selectedPath}.`);
 	updateRuntimeControls();
 	try {
@@ -1609,6 +2314,7 @@ async function startRuntime(mode) {
 		const bundle = await request(
 			`/bt/bundle/${encodeURIComponent(selectedPath).replace(/%2F/g, '/')}`,
 		);
+		attachRunBundle(runRecord, bundle);
 		const deploymentConfiguration = endpointService.createManualConfiguration({
 			adapterId: navigatorConfiguration.adapterId,
 			adapterValues: navigatorConfiguration.adapterValues,
@@ -1635,12 +2341,37 @@ async function startRuntime(mode) {
 				nativeMessageType: 'labust_nav2_msgs/msg/BehaviorTreeNodeMap',
 			},
 		});
+		const debugControlConfiguration = mode === 'debug' ? endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'service',
+			address: `${endpoint}/debug/control`,
+			endpointValues: { serviceType: 'labust_nav2_msgs/srv/ControlBehaviorTreeDebug' },
+		}) : null;
+		const debugStateConfiguration = mode === 'debug' ? endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/debug/state`,
+			endpointValues: { nativeMessageType: 'std_msgs/msg/String' },
+		}) : null;
+		const blackboardConfiguration = mode === 'debug' ? endpointService.createManualConfiguration({
+			adapterId: navigatorConfiguration.adapterId,
+			adapterValues: navigatorConfiguration.adapterValues,
+			endpointType: 'topic',
+			address: `${endpoint}/blackboard`,
+			endpointValues: { nativeMessageType: 'std_msgs/msg/String' },
+		}) : null;
 		runtimeNodeStates.clear();
 		runtimeNodeStatesByPath.clear();
 		runtimeNodePathsByUid.clear();
+		runtimeDebugState = null;
+		runtimeBlackboardState = null;
 		let runtime = null;
 		const pendingSnapshots = [];
 		const pendingNodeMaps = [];
+		const pendingDebugStates = [];
+		const pendingBlackboardStates = [];
 		const applySnapshot = (snapshot, source) => {
 			if (runtime) applyRuntimeSnapshot(runtime, snapshot, source);
 			else pendingSnapshots.push({ snapshot, source });
@@ -1653,8 +2384,22 @@ async function startRuntime(mode) {
 		};
 		const nodeMapSubscription = endpointService.subscribeRaw(
 			nodeMapConfiguration, applyNodeMap);
+		const applyDebugState = message => {
+			if (runtime) applyRuntimeDebugState(runtime, message);
+			else pendingDebugStates.push(message);
+		};
+		const debugStateSubscription = debugStateConfiguration
+			? endpointService.subscribeRaw(debugStateConfiguration, applyDebugState) : null;
+		const applyBlackboardState = message => {
+			if (runtime) applyRuntimeBlackboardState(runtime, message);
+			else pendingBlackboardStates.push(message);
+		};
+		const blackboardSubscription = blackboardConfiguration
+			? endpointService.subscribeRaw(blackboardConfiguration, applyBlackboardState) : null;
 		logRuntime('info', `Subscribed to state updates at ${endpoint}/state.`);
 		logRuntime('info', `Subscribed to node map updates at ${endpoint}/node_map.`);
+		if (debugStateSubscription) logRuntime('info', `Subscribed to debug updates at ${endpoint}/debug/state.`);
+		if (blackboardSubscription) logRuntime('info', `Subscribed to blackboard updates at ${endpoint}/blackboard.`);
 		let action;
 		let deployment;
 		try {
@@ -1663,11 +2408,21 @@ async function startRuntime(mode) {
 				throw new Error(deployment.error_message || 'Behavior-tree deployment was rejected.');
 			}
 			logRuntime('info', `Deployment accepted: ${deployment.deployment_id}.`);
-				action = await endpointService.runAction(actionConfiguration, {
+			if (runRecord) runRecord.metadata.deployment_id = deployment.deployment_id;
+			const breakpoints = mode === 'debug' ? [...debugBreakpointsForSelectedFile()] : [];
+			if (mode === 'debug' && debugStartMode === 'breakpoint' && breakpoints.length === 0) {
+				throw new Error('Add a graph breakpoint or choose Start paused before debugging.');
+			}
+			if (mode === 'debug') {
+				logRuntime('info', `Debug goal: ${debugStartMode === 'breakpoint' ? 'run to breakpoint' : 'start paused'}.`);
+			}
+			action = await endpointService.runAction(actionConfiguration, {
 				behavior_tree: deployment.behavior_tree,
 				deployment_id: deployment.deployment_id,
 				blackboard_json: blackboardJson,
 				debug: mode === 'debug',
+				debug_start_mode: mode === 'debug' && debugStartMode === 'breakpoint' ? 1 : 0,
+				breakpoint_paths: breakpoints,
 			}, {
 				onFeedback: snapshot => applySnapshot(snapshot, 'Feedback'),
 				onGoalAccepted: () => logRuntime('info', 'Action goal accepted.'),
@@ -1676,18 +2431,26 @@ async function startRuntime(mode) {
 		} catch (error) {
 			stateSubscription.unsubscribe();
 			nodeMapSubscription.unsubscribe();
+			debugStateSubscription?.unsubscribe();
+			blackboardSubscription?.unsubscribe();
 			throw error;
 		}
 		runtime = {
 			action,
 			stateSubscription,
 			nodeMapSubscription,
+			debugStateSubscription,
+			blackboardSubscription,
+			debugControlConfiguration,
 			deploymentId: deployment.deployment_id,
+			record: runRecord,
 		};
 		activeRuntime = runtime;
 		setRuntimeMode(mode);
 		pendingNodeMaps.forEach(nodeMap => applyRuntimeNodeMap(runtime, nodeMap));
 		pendingSnapshots.forEach(({ snapshot, source }) => applySnapshot(snapshot, source));
+		pendingDebugStates.forEach(message => applyRuntimeDebugState(runtime, message));
+		pendingBlackboardStates.forEach(message => applyRuntimeBlackboardState(runtime, message));
 		status.setOK(`${mode === 'debug' ? 'Debug' : 'Runtime'} started.`);
 		void action.result.then(result => finishRuntime(runtime, result)).catch(error => {
 			if (activeRuntime === runtime) {
@@ -1698,10 +2461,42 @@ async function startRuntime(mode) {
 		const message = errorMessage(error);
 		logRuntime('error', `Cannot start runtime: ${message}`);
 		status.setError(`Cannot start runtime: ${message}`);
+		void finishRunRecording(runRecord, {
+			status: 'start_failed',
+			error_code: null,
+			error_message: message,
+		});
 	} finally {
 		runtimeStarting = false;
 		updateRuntimeControls();
 	}
+}
+
+async function sendDebugControl(command, nodePath = '', breakpointPaths = []) {
+	const runtime = activeRuntime;
+	if (!runtime || runtimeMode !== 'debug' || !runtime.debugControlConfiguration) {
+		throw new Error('No active behavior-tree debug session exists.');
+	}
+	const response = await endpointService.call(runtime.debugControlConfiguration, {
+		deployment_id: runtime.deploymentId,
+		command,
+		node_path: nodePath,
+		breakpoint_paths: breakpointPaths,
+	});
+	if (!response.accepted) {
+		throw new Error(response.error_message || 'Debug command was rejected.');
+	}
+	if (activeRuntime === runtime && response.paused === true) {
+		runtimeDebugState = {
+			paused: true,
+			node_path: typeof response.pause_path === 'string' ? response.pause_path : '',
+			reason: runtimeDebugState?.reason || 'paused',
+		};
+		updateRuntimeGraphStates();
+		updateRuntimeFeedback();
+		updateRuntimeControls();
+	}
+	return response;
 }
 
 saveButton.addEventListener('click', async () => {
@@ -1709,13 +2504,52 @@ saveButton.addEventListener('click', async () => {
 });
 playButton.addEventListener('click', () => startRuntime('play'));
 debugButton.addEventListener('click', () => startRuntime('debug'));
+debugTickButton.addEventListener('click', async () => {
+	try {
+		logRuntime('info', 'Command: Tick.');
+		await sendDebugControl(0);
+	} catch (error) {
+		const message = errorMessage(error);
+		status.setError(`Unable to tick behavior tree: ${message}`);
+		logRuntime('error', `Unable to tick behavior tree: ${message}`);
+	}
+});
+debugUntilButton.addEventListener('click', async () => {
+	try {
+		logRuntime('info', `Command: Tick until ${selectedGraphRuntimePath} starts.`);
+		await sendDebugControl(1, selectedGraphRuntimePath);
+	} catch (error) {
+		const message = errorMessage(error);
+		status.setError(`Unable to tick until selected node starts: ${message}`);
+		logRuntime('error', `Unable to tick until selected node starts: ${message}`);
+	}
+});
+debugContinueButton.addEventListener('click', async () => {
+	try {
+		logRuntime('info', 'Command: Continue.');
+		await sendDebugControl(2);
+	} catch (error) {
+		const message = errorMessage(error);
+		status.setError(`Unable to continue behavior tree: ${message}`);
+		logRuntime('error', `Unable to continue behavior tree: ${message}`);
+	}
+});
 stopButton.addEventListener('click', async () => {
-	if (!activeRuntime) return;
+	const runtime = activeRuntime;
+	if (!runtime) return;
 	runtimeStopping = true;
 	updateRuntimeControls();
 	try {
+		if (runtime.debugControlConfiguration) {
+			try {
+				logRuntime('info', 'Command: Stop.');
+				await sendDebugControl(3);
+			} catch (error) {
+				logRuntime('warning', `Unable to release debug hooks: ${errorMessage(error)}`);
+			}
+		}
 		logRuntime('info', 'Cancellation requested.');
-		await activeRuntime.action.cancel();
+		await runtime.action.cancel();
 		status.setOK('Cancellation requested.');
 	} catch (error) {
 		const message = errorMessage(error);
@@ -1727,6 +2561,9 @@ stopButton.addEventListener('click', async () => {
 });
 
 runtimeLogToggle.addEventListener('click', () => setRuntimeLogOpen(!runtimeLogOpen));
+runtimeBlackboardToggle.addEventListener('click', () => {
+	setRuntimeBlackboardOpen(!runtimeBlackboardOpen);
+});
 runtimeLogClear.addEventListener('click', () => {
 	runtimeLog.length = 0;
 	renderRuntimeLog();
@@ -1752,6 +2589,10 @@ editor.addEventListener('input', () => {
 
 textTabButton.addEventListener('click', () => selectTab('text'));
 treeTabButton.addEventListener('click', () => selectTab('tree'));
+runsTabButton.addEventListener('click', () => selectTab('runs'));
+runsRefreshButton.addEventListener('click', () => void loadRuns());
+runsList.addEventListener('change', () => void loadRun(runsList.value));
+runsTimeline.addEventListener('input', () => renderRunFrame(Number(runsTimeline.value)));
 nodeSearch.addEventListener('input', renderNodePalette);
 fileList.addEventListener('change', () => {
 	if (fileList.value) loadFile(fileList.value);

@@ -35,6 +35,19 @@
 			<div id="{uniqueID}_navigator_endpoint_configuration"></div>
 			<label for="{uniqueID}_blackboard_inputs">Blackboard inputs (JSON object)</label>
 			<textarea id="{uniqueID}_blackboard_inputs" spellcheck="false" placeholder="{}">{}</textarea>
+			<label for="{uniqueID}_recording_mode">Run recording</label>
+			<select id="{uniqueID}_recording_mode">
+				<option value="off">Off</option>
+				<option value="events">State changes</option>
+				<option value="timeline">Full timeline</option>
+			</select>
+			<p class="comment">Full timeline is the default. It stores every state snapshot for replay and is capped at 48 MiB per run.</p>
+			<label for="{uniqueID}_debug_start_mode">Debug start</label>
+			<select id="{uniqueID}_debug_start_mode">
+				<option value="paused">Start paused</option>
+				<option value="breakpoint">Run to breakpoint</option>
+			</select>
+			<p class="comment">Breakpoints are the red markers on graph nodes. They apply to the next debug run.</p>
 			<p class="comment">Select a Robot Model to use its ROS namespace. Play deploys the selected XML bundle, then sends this object with the action goal.</p>
 		</section>
 
