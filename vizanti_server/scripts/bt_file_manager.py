@@ -176,6 +176,65 @@ class BtFileManager:
         except (OSError, UnicodeDecodeError, ValueError) as error:
             return jsonify(error=str(error)), 400
 
+    def get_bundle(self, relative_path: str):
+        try:
+            entry_path = self.resolve_file(relative_path)
+            if not entry_path.is_file():
+                return jsonify(error='XML file was not found.'), 404
+            return jsonify(**self.build_bundle(relative_path))
+        except (OSError, UnicodeDecodeError, ValueError) as error:
+            return jsonify(error=str(error)), 400
+
+    def build_bundle(self, relative_path: str) -> dict[str, object]:
+        """Return a validated deployment bundle rooted at ``relative_path``."""
+        entry_path = self.resolve_file(relative_path)
+        if not entry_path.is_file():
+            raise ValueError('XML file was not found.')
+
+        files: dict[str, dict[str, str]] = {}
+        self._collect_bundle_files(entry_path, files)
+        return {
+            'entry_path': entry_path.relative_to(self.xml_root).as_posix(),
+            'files': [files[path] for path in sorted(files)],
+        }
+
+    def _collect_bundle_files(
+            self, path: Path, files: dict[str, dict[str, str]]) -> None:
+        resolved = path.resolve()
+        if self.xml_root is None or self.xml_root not in resolved.parents:
+            raise ValueError('XML path is outside the configured root.')
+
+        relative_path = resolved.relative_to(self.xml_root).as_posix()
+        if relative_path in files:
+            return
+
+        content = resolved.read_text(encoding='utf-8')
+        try:
+            document_root = ElementTree.fromstring(content)
+        except ElementTree.ParseError as error:
+            raise ValueError(f'Invalid XML in {relative_path}: {error}') from error
+        if document_root.tag != 'root':
+            raise ValueError(f'Invalid XML in {relative_path}: document root must be <root>.')
+
+        files[relative_path] = {
+            'path': relative_path,
+            'content': content,
+            'sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
+        }
+        for include in document_root.iter('include'):
+            include_path = include.get('path')
+            if not include_path:
+                raise ValueError(f'Invalid XML in {relative_path}: <include> requires a path.')
+            candidate = (resolved.parent / include_path).resolve()
+            if (self.xml_root not in candidate.parents or
+                    candidate.suffix.lower() != '.xml'):
+                raise ValueError(
+                    f'Invalid include in {relative_path}: path is outside the configured root.')
+            if not candidate.is_file():
+                raise ValueError(
+                    f'Invalid include in {relative_path}: {include_path} was not found.')
+            self._collect_bundle_files(candidate, files)
+
     def create_file(self):
         payload = request.get_json(silent=True) or {}
         relative_path = payload.get('path', '')
@@ -292,6 +351,11 @@ def register_routes(app, base_url, bt_file_manager):
     app.add_url_rule(base_url + '/bt/github/pull', 'pull_bt_github', bt_file_manager.pull_github, methods=['POST'])
     app.add_url_rule(base_url + '/bt/files', 'list_bt_files', bt_file_manager.list_files)
     app.add_url_rule(base_url + '/bt/file/<path:relative_path>', 'get_bt_file', bt_file_manager.get_file)
+    app.add_url_rule(
+        base_url + '/bt/bundle/<path:relative_path>',
+        'get_bt_bundle',
+        bt_file_manager.get_bundle,
+    )
     app.add_url_rule(base_url + '/bt/file', 'create_bt_file', bt_file_manager.create_file, methods=['POST'])
     app.add_url_rule(base_url + '/bt/subtrees', 'list_bt_subtrees', bt_file_manager.list_subtrees)
     app.add_url_rule(base_url + '/bt/file/<path:relative_path>', 'save_bt_file', bt_file_manager.save_file, methods=['PUT'])

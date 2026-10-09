@@ -64,6 +64,12 @@ function initializeNav() {
 		const eid = settings.navbar[i].id;
 		const container = settings.navbar[i].container_id;
 		const template = element_templates[type];
+		if (!template || !template.icon) {
+			console.warn(
+				`Skipping widget ${eid}: template "${type}" is unavailable.`
+			);
+			continue;
+		}
 
 		if(typeof container === 'undefined' || container == "icon_container")
 			icon_container.appendChild(createElement(template.icon, eid));

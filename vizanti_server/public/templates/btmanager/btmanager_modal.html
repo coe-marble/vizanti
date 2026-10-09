@@ -10,6 +10,7 @@
 	.btmanager-config-section label { display: block; margin-top: 8px; }
 	.btmanager-config-section label:first-of-type { margin-top: 0; }
 	.btmanager-config-section input { width: 100%; box-sizing: border-box; }
+	.btmanager-config-section textarea { width: 100%; min-height: 90px; box-sizing: border-box; resize: vertical; }
 	.btmanager-config-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 	.btmanager-config-actions button { margin: 0; }
 	.btmanager-config-modal > .delete_button { margin-top: 16px; }
@@ -27,6 +28,14 @@
 			<div class="btmanager-config-actions">
 				<button id="{uniqueID}_configure">Load XML files</button>
 			</div>
+		</section>
+
+		<section class="btmanager-config-section">
+			<h4>Runtime</h4>
+			<div id="{uniqueID}_navigator_endpoint_configuration"></div>
+			<label for="{uniqueID}_blackboard_inputs">Blackboard inputs (JSON object)</label>
+			<textarea id="{uniqueID}_blackboard_inputs" spellcheck="false" placeholder="{}">{}</textarea>
+			<p class="comment">Select a Robot Model to use its ROS namespace. Play deploys the selected XML bundle, then sends this object with the action goal.</p>
 		</section>
 
 		<section class="btmanager-config-section">

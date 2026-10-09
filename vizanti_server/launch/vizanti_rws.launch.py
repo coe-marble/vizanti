@@ -1,5 +1,16 @@
+import os
+from pathlib import Path
+
 import launch
 import launch_ros.actions
+
+
+def default_behavior_tree_folder():
+    mount_path = os.environ.get('MOUNT_PATH')
+    if mount_path:
+        return str(Path(mount_path) / 'ros2_ws' / 'src' / 'jetski' / 'data' / 'bt')
+    return '~/.local/share/vizanti/btmanager/behavior_trees'
+
 
 def generate_launch_description():
     base_url = launch.substitutions.LaunchConfiguration('base_url', default='') #e.g. /vizanti
@@ -7,7 +18,7 @@ def generate_launch_description():
     port_rosbridge = launch.substitutions.LaunchConfiguration('port_rosbridge', default=5001)
     flask_debug = launch.substitutions.LaunchConfiguration('flask_debug', default=False)
     default_widget_config = launch.substitutions.LaunchConfiguration('default_widget_config', default='') #e.g. ~/your_custom_config.json
-    behavior_tree_folder = launch.substitutions.LaunchConfiguration('behavior_tree_folder', default='~/.local/share/vizanti/btmanager/behavior_trees')
+    behavior_tree_folder = launch.substitutions.LaunchConfiguration('behavior_tree_folder', default=default_behavior_tree_folder())
     copy_demo_trees = launch.substitutions.LaunchConfiguration('copy_demo_trees', default=False)
     demo_behavior_tree_source = launch.substitutions.LaunchConfiguration('demo_behavior_tree_source', default='')
     allow_shell_commands = launch.substitutions.LaunchConfiguration('allow_shell_commands', default=True)

@@ -30,6 +30,8 @@
 // - publish(instance, configuration, endpoint, outputMessageId, guiMessage)
 //   sends one GUI message
 // - call(instance, configuration, endpoint, guiRequest) resolves with one response
+// - runAction(instance, configuration, endpoint, goal, options) starts an
+//   adapter-owned action and returns its cancellation and result lifecycle.
 // - recordingStatus(instance, configuration) returns the active recording state
 // - setRecording(instance, configuration, request) starts or stops a recording
 // - commandShortcuts(instance, configuration) returns adapter-provided command
@@ -38,6 +40,7 @@
 export const ENDPOINT_TYPE = Object.freeze({
 	TOPIC: "topic",
 	SERVICE: "service",
+	ACTION: "action",
 });
 
 export const ADAPTER_OPERATION = Object.freeze({
@@ -52,6 +55,7 @@ export const ADAPTER_OPERATION = Object.freeze({
 	SUBSCRIBE: "subscribe",
 	PUBLISH: "publish",
 	CALL: "call",
+	RUN_ACTION: "runAction",
 	CREATE_MANUAL_ENDPOINT: "createManualEndpoint",
 	LIST_OUTPUT_MESSAGES: "listOutputMessages",
 	RESTORE_ENDPOINT: "restoreEndpoint",

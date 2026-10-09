@@ -640,6 +640,158 @@ function callService(client, service, serviceType, request, roslib) {
 	});
 }
 
+function createTopic(client, name, messageType, roslib) {
+	return new roslib.Topic({ ros: client.ros, name, messageType });
+}
+
+function createActionId() {
+	if (typeof globalThis.crypto?.randomUUID === "function") {
+		return `vizanti-${globalThis.crypto.randomUUID()}`;
+	}
+	return `vizanti-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function removeRosListener(ros, event, listener) {
+	if (typeof ros.off === "function") {
+		ros.off(event, listener);
+	} else if (typeof ros.removeListener === "function") {
+		ros.removeListener(event, listener);
+	}
+}
+
+function sendActionOperation(ros, operation) {
+	if (typeof ros.callOnConnection !== "function") {
+		throw new TypeError("Rosbridge does not support action operations.");
+	}
+	ros.callOnConnection(operation);
+}
+
+const actionEventBridge = Symbol("vizantiActionEventBridge");
+
+function installActionEventBridge(ros) {
+	if (ros[actionEventBridge]) return;
+	const socket = ros.socket;
+	if (typeof socket?.addEventListener !== "function") {
+		throw new TypeError("Rosbridge action operations require an active WebSocket connection.");
+	}
+
+	socket.addEventListener("message", event => {
+		if (typeof event?.data === "string") {
+			try {
+				const message = JSON.parse(event.data);
+				if (message?.op === "action_feedback" || message?.op === "action_result") {
+					ros.emit(message.op, message);
+				}
+			} catch {
+				// The bundled ROSLIB handles compressed and non-JSON frames itself.
+			}
+		}
+	});
+	ros[actionEventBridge] = true;
+}
+
+async function runAction(client, endpoint, goal, options) {
+	const actionName = requireEndpointString(endpoint, "action");
+	const actionType = requireEndpointString(endpoint, "actionType");
+	if (!goal || typeof goal !== "object") {
+		throw new TypeError("Action goal must be an object.");
+	}
+	if (!options || typeof options !== "object") {
+		throw new TypeError("Action options must be an object.");
+	}
+	const onFeedback = typeof options.onFeedback === "function" ? options.onFeedback : () => {};
+	const onGoalAccepted = typeof options.onGoalAccepted === "function"
+		? options.onGoalAccepted : () => {};
+	const startTimeoutMs = Number.isFinite(options.startTimeoutMs)
+		&& options.startTimeoutMs >= 0 ? options.startTimeoutMs : 5_000;
+	const ros = client.ros;
+	if (!ros || typeof ros.on !== "function") {
+		throw new TypeError("Rosbridge action operations require an event-capable client.");
+	}
+	installActionEventBridge(ros);
+	const actionId = createActionId();
+	let disposed = false;
+	let goalAccepted = false;
+	let startTimeoutId;
+	let resolveResult;
+	let rejectResult;
+	const result = new Promise((resolve, reject) => {
+		resolveResult = resolve;
+		rejectResult = reject;
+	});
+	const clearStartTimeout = () => {
+		if (startTimeoutId === undefined) return;
+		clearTimeout(startTimeoutId);
+		startTimeoutId = undefined;
+	};
+	const markActive = () => {
+		clearStartTimeout();
+		if (goalAccepted) return;
+		goalAccepted = true;
+		onGoalAccepted();
+	};
+	const dispose = () => {
+		if (disposed) return;
+		disposed = true;
+		clearStartTimeout();
+		removeRosListener(ros, "action_feedback", feedbackHandler);
+		removeRosListener(ros, "action_result", resultHandler);
+	};
+	const feedbackHandler = message => {
+		if (message?.id !== actionId || message?.action !== actionName) return;
+		markActive();
+		onFeedback(message.values ?? {});
+	};
+	const resultHandler = message => {
+		if (message?.id !== actionId || message?.action !== actionName) return;
+		dispose();
+		const values = message.values;
+		resolveResult({
+			status: message.status ?? 0,
+			result: values && typeof values === "object"
+				? values : { error_msg: values ? String(values) : "Action failed." },
+		});
+	};
+
+	try {
+		ros.on("action_feedback", feedbackHandler);
+		ros.on("action_result", resultHandler);
+		sendActionOperation(ros, {
+			op: "send_action_goal",
+			id: actionId,
+			action: actionName,
+			action_type: actionType,
+			args: goal,
+			feedback: true,
+		});
+		if (!disposed) {
+			startTimeoutId = setTimeout(() => {
+				dispose();
+				rejectResult(new Error(
+					`Timed out after ${startTimeoutMs} ms waiting for action feedback or a result.`,
+				));
+			}, startTimeoutMs);
+		}
+	} catch (error) {
+		dispose();
+		throw error;
+	}
+
+	return Object.freeze({
+		result,
+		markActive,
+		cancel() {
+			sendActionOperation(ros, {
+				op: "cancel_action_goal",
+				id: actionId,
+				action: actionName,
+			});
+			return Promise.resolve();
+		},
+		dispose,
+	});
+}
+
 // The current dashboard has one ROS2 adapter.
 export const localRos2Instance = Object.freeze({
 	id: "ros2",
@@ -682,6 +834,15 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 		},
 
 		endpointFields(endpointType, guiMessageType) {
+			if (endpointType === ENDPOINT_TYPE.ACTION) {
+				return [
+					{ id: "actionType", label: "Action Type", control: "text", placeholder: "package_name/action/Action" },
+					{
+						id: "endpointId", label: "Action", control: "endpoint",
+						manual: { label: "Enter manually", placeholder: "Action name" },
+					},
+				];
+			}
 			if (endpointType === ENDPOINT_TYPE.SERVICE) {
 				const serviceType = serviceTypeFor(guiMessageType);
 				return [
@@ -761,6 +922,19 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 
 		createManualEndpoint(instance, configuration, endpointType, guiMessageType, outputMessageId, address, endpointValues) {
 			const endpointId = typeof address === "string" ? address.trim() : "";
+			if (endpointType === ENDPOINT_TYPE.ACTION) {
+				const actionType = endpointValues && typeof endpointValues.actionType === "string"
+					? endpointValues.actionType.trim() : "";
+				if (endpointId === "" || actionType === "") return null;
+				return {
+					id: endpointId,
+					label: endpointId,
+					endpoint: {
+						action: resolveEndpointAddress(endpointId, configuration),
+						actionType,
+					},
+				};
+			}
 			if (endpointType === ENDPOINT_TYPE.SERVICE) {
 				const serviceType = serviceTypeFor(guiMessageType) || (endpointValues && typeof endpointValues.serviceType === "string"
 					? endpointValues.serviceType.trim() : "");
@@ -774,7 +948,10 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 
 			if (endpointType !== ENDPOINT_TYPE.TOPIC) return null;
 			const mappings = mappingsFor(guiMessageType);
-			if (!mappings || !mappings[outputMessageId] || endpointId === "") {
+			const nativeMessageType = endpointValues && typeof endpointValues.nativeMessageType === "string"
+				? endpointValues.nativeMessageType.trim()
+				: (mappings && mappings[outputMessageId] ? outputMessageId : "");
+			if (!nativeMessageType || endpointId === "") {
 				return null;
 			}
 			return {
@@ -782,7 +959,7 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 				label: endpointId,
 				endpoint: {
 					topic: resolveEndpointAddress(endpointId, configuration),
-					nativeMessageType: outputMessageId,
+					nativeMessageType,
 				},
 			};
 		},
@@ -790,6 +967,11 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 		async restoreEndpoint(instance, configuration, endpointType, guiMessageType, outputMessageId, endpointId, endpointValues) {
 			if (typeof endpointId !== "string" || endpointId === "") {
 				return null;
+			}
+			if (endpointType === ENDPOINT_TYPE.ACTION) {
+				return this.createManualEndpoint(
+					instance, configuration, endpointType, guiMessageType, outputMessageId,
+					endpointId, endpointValues);
 			}
 			const endpoints = await this.discoverEndpoints(
 				instance, configuration, endpointType, guiMessageType, outputMessageId, endpointValues,
@@ -856,6 +1038,10 @@ export function createRos2Adapter({ ROSLIB: roslib, getClient, createTf }) {
 			return new Promise((resolve, reject) => {
 				service.callService(new roslib.ServiceRequest(nativeServiceRequest(request)), resolve, reject);
 			});
+		},
+
+		runAction(instance, configuration, endpoint, goal, options) {
+			return runAction(getClient(instance), endpoint, goal, options);
 		},
 
 		async listNodes(instance, configuration) {

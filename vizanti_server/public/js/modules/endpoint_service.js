@@ -27,7 +27,7 @@ function resolve(configuration) {
 export const endpointService = Object.freeze({
 	listAdapters(guiMessageType, endpointType) {
 		return [...instances.entries()]
-			.filter(([, value]) => endpointType === "service"
+			.filter(([, value]) => endpointType === "service" || endpointType === "action"
 				|| guiMessageType === undefined || value.adapter.supports(guiMessageType))
 			.map(([id, value]) => ({ id, label: value.label }));
 	},
@@ -92,6 +92,39 @@ export const endpointService = Object.freeze({
 		);
 	},
 
+	createManualConfiguration({
+		adapterId = DEFAULT_ADAPTER_ID,
+		adapterValues = {},
+		endpointType,
+		guiMessageType = undefined,
+		outputMessageId = "",
+		address,
+		endpointValues = {},
+	} = {}) {
+		const endpoint = this.createManualEndpoint(
+			adapterId,
+			adapterValues,
+			endpointType,
+			guiMessageType,
+			outputMessageId,
+			address,
+			endpointValues,
+		);
+		if (endpoint === null) {
+			throw new TypeError("Unable to create the requested endpoint configuration.");
+		}
+		return {
+			adapterId,
+			adapterValues,
+			endpointType,
+			guiMessageType,
+			outputMessageId,
+			endpointValues,
+			endpointId: endpoint.id,
+			endpoint: endpoint.endpoint,
+		};
+	},
+
 	async restoreEndpoint(adapterId, adapterValues, endpointType, guiMessageType, outputMessageId, endpointId, endpointValues) {
 		const resolved = instances.get(adapterId);
 		if (!resolved) {
@@ -131,6 +164,20 @@ export const endpointService = Object.freeze({
 		return resolved.adapter.publish(
 			resolved.instance, configuration.adapterValues || {}, configuration.endpoint,
 			configuration.outputMessageId, message,
+		);
+	},
+
+	call(configuration, request) {
+		const resolved = resolve(configuration);
+		return resolved.adapter.call(
+			resolved.instance, configuration.adapterValues || {}, configuration.endpoint, request,
+		);
+	},
+
+	runAction(configuration, goal, options = {}) {
+		const resolved = resolve(configuration);
+		return resolved.adapter.runAction(
+			resolved.instance, configuration.adapterValues || {}, configuration.endpoint, goal, options,
 		);
 	},
 
