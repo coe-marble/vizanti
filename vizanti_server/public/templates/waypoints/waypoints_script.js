@@ -150,9 +150,34 @@ importCSVInput.addEventListener('change', async (event)=>{
 
 // Settings
 
+function legacyEndpointConfiguration(topic) {
+	const endpointId = typeof topic === "string" ? topic.trim() : "";
+
+	return {
+		mode: "manual",
+		robotModelId: "",
+		manualAdapterConfiguration: {
+			adapterId: "ros2",
+			values: {
+				namespace: "",
+				tfFrame: "base_link",
+			},
+		},
+		endpointConfiguration: {
+			endpointValues: {},
+			outputMessageId: "",
+			endpointId,
+			manualEndpointId: endpointId,
+			endpoint: null,
+			endpointMode: "manual",
+		},
+	};
+}
+
 if(settings.hasOwnProperty("{uniqueID}")){
 	const loaded_data  = settings["{uniqueID}"];
-	endpointConfiguration = loaded_data.endpoint_configuration || null;
+	endpointConfiguration = loaded_data.endpoint_configuration
+		?? legacyEndpointConfiguration(loaded_data.topic);
 	points = loaded_data.points;
 	fixed_frame = loaded_data.fixed_frame ?? tf.fixed_frame;
 	base_link_frame = loaded_data.base_link_frame ?? "base_link";

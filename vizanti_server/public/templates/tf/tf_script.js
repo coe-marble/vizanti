@@ -57,6 +57,7 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 
 	frame_visibility = loadedData.frame_visibility;
 	origin_frame = loadedData.origin_frame ?? tf.fixed_frame;
+	syncGlobalFixedFrameSetting();
 	if(origin_frame !== "" && origin_frame !== tf.fixed_frame)
 		tf.setFixedFrame(origin_frame);
 }else{
@@ -73,6 +74,12 @@ function saveSettings() {
 		origin_frame: origin_frame
 	};
 	settings.save();
+}
+
+function syncGlobalFixedFrameSetting(){
+	const globalSettingsWidget = settings.navbar?.find((widget) => widget.type === "settings");
+	if(globalSettingsWidget && settings[globalSettingsWidget.id])
+		settings[globalSettingsWidget.id].fixed_frame = origin_frame;
 }
 
 function setOriginFrameList(){
@@ -96,6 +103,7 @@ originFrameBox.addEventListener("change", () => {
 		return;
 
 	origin_frame = originFrameBox.value;
+	syncGlobalFixedFrameSetting();
 	tf.setFixedFrame(origin_frame);
 	status.setOK();
 	saveSettings();
@@ -467,9 +475,7 @@ window.addEventListener("tf_changed", ()=>{
 });
 
 window.addEventListener("tf_fixed_frame_changed", ()=>{
-	origin_frame = tf.fixed_frame;
 	setOriginFrameList();
-	saveSettings();
 	drawFrames();
 });
 
