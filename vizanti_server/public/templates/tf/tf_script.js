@@ -27,6 +27,7 @@ const axesCheckbox = document.getElementById('{uniqueID}_showaxes');
 const linesCheckbox = document.getElementById('{uniqueID}_showlines');
 const scaleSlider = document.getElementById('{uniqueID}_scale');
 const scaleSliderValue = document.getElementById('{uniqueID}_scale_value');
+const originFrameBox = document.getElementById('{uniqueID}_origin_frame');
 
 scaleSlider.addEventListener('input', function () {
 	scaleSliderValue.textContent = this.value;
@@ -40,6 +41,7 @@ scaleSlider.addEventListener('change', saveSettings);
 let prev_transforms = new Set();
 let grouped_frames = [];
 let frame_visibility = {};
+let origin_frame = tf.fixed_frame;
 
 // Settings
 
@@ -54,6 +56,9 @@ if (settings.hasOwnProperty('{uniqueID}')) {
 	scaleSliderValue.textContent = scaleSlider.value;
 
 	frame_visibility = loadedData.frame_visibility;
+	origin_frame = loadedData.origin_frame ?? tf.fixed_frame;
+	if(origin_frame !== "" && origin_frame !== tf.fixed_frame)
+		tf.setFixedFrame(origin_frame);
 }else{
 	saveSettings();
 }
@@ -64,10 +69,39 @@ function saveSettings() {
 		show_axes: axesCheckbox.checked,
 		show_lines: linesCheckbox.checked,
 		scale: parseFloat(scaleSlider.value),
-		frame_visibility: frame_visibility
+		frame_visibility: frame_visibility,
+		origin_frame: origin_frame
 	};
 	settings.save();
 }
+
+function setOriginFrameList(){
+	const frameNames = new Set(tf.frame_list);
+	if(origin_frame !== "")
+		frameNames.add(origin_frame);
+
+	const options = document.createDocumentFragment();
+	for(const frameName of [...frameNames].sort()){
+		const option = document.createElement("option");
+		option.value = frameName;
+		option.textContent = frameName;
+		options.appendChild(option);
+	}
+	originFrameBox.replaceChildren(options);
+	originFrameBox.value = origin_frame;
+}
+
+originFrameBox.addEventListener("change", () => {
+	if(originFrameBox.value === "")
+		return;
+
+	origin_frame = originFrameBox.value;
+	tf.setFixedFrame(origin_frame);
+	status.setOK();
+	saveSettings();
+});
+
+originFrameBox.addEventListener("click", setOriginFrameList);
 
 // Rendering
 
@@ -416,7 +450,10 @@ document.getElementById('{uniqueID}_disable_all').addEventListener('click',  asy
 	updateGUI();
 });
 
-icon.addEventListener("click", updateGUI);
+icon.addEventListener("click", () => {
+	setOriginFrameList();
+	updateGUI();
+});
 
 function resizeScreen(){
 	canvas.height = window.innerHeight;
@@ -430,6 +467,9 @@ window.addEventListener("tf_changed", ()=>{
 });
 
 window.addEventListener("tf_fixed_frame_changed", ()=>{
+	origin_frame = tf.fixed_frame;
+	setOriginFrameList();
+	saveSettings();
 	drawFrames();
 });
 
@@ -440,5 +480,6 @@ window.addEventListener('resize', resizeScreen);
 window.addEventListener('orientationchange', resizeScreen);
 
 resizeScreen();
+setOriginFrameList();
 
 console.log("TF Widget Loaded {uniqueID}")
