@@ -369,10 +369,9 @@ function drawWaypoints() {
     ctx.clearRect(0, 0, wid, hei);
 
 	const frame = tf.absoluteTransforms[fixed_frame];
-	if(!frame){
-		status.setError("Fixed transform frame not selected or the TF data is missing.");
-		return;
-	}
+	const transformAvailable = frame !== undefined;
+	if(!transformAvailable)
+		status.setWarn("Fixed transform is unavailable; rendering waypoints in the current view.");
 
 	const color = mode != "Z" ? "#EBCE00" : "#abcbff";
 	const OUTLINE_PX = mode != "Z" ? 13 : 18;
@@ -664,7 +663,8 @@ function drawWaypoints() {
 			ctx.fillText(index, pos.x, pos.y+5);
 	});
 
-	status.setOK();
+	if(transformAvailable)
+		status.setOK();
 }
 
 let start_stamp = undefined;

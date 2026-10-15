@@ -68,9 +68,19 @@ const gotoPoseEndpointConfigurationContainer = document.getElementById("{uniqueI
 const contextMenu = document.getElementById("{uniqueID}_context_menu");
 const mapPointer = document.getElementById("{uniqueID}_map_pointer");
 const gotoPointAction = document.getElementById("{uniqueID}_goto_point_action");
+let contextMenuLocksMapInput = false;
 
 contextMenu.addEventListener("mousedown", (event) => event.stopPropagation());
 contextMenu.addEventListener("touchstart", (event) => event.stopPropagation());
+
+function closeContextMenu(){
+	contextMenu.style.display = "none";
+	mapPointer.style.display = "none";
+	if(contextMenuLocksMapInput){
+		view.setInputMovementEnabled(true);
+		contextMenuLocksMapInput = false;
+	}
+}
 
 function updateGotoPointAvailability() {
 	const editor = gotoMessageMode === "pose_stamped"
@@ -732,23 +742,21 @@ window.handleContextMenuAction = function(event, action) {
 	if(action == "goto_point"){
 		const editor = gotoMessageMode === "pose_stamped"
 			? gotoPoseEndpointConfigurationEditor : gotoNavSatFixEndpointConfigurationEditor;
-		if (!vehicleSelectionModule.getSelectedVehicle() || !editor || !editor.activeConfiguration) {
-			return;
+		if (vehicleSelectionModule.getSelectedVehicle() && editor && editor.activeConfiguration) {
+			let pinX = mapPointer.offsetLeft + mapPointer.width / 2;
+			let pinY = mapPointer.offsetTop + mapPointer.height;
+			handleGotoPoint(pinX, pinY);
 		}
-		let pinX = mapPointer.offsetLeft + mapPointer.width / 2;
-		let pinY = mapPointer.offsetTop + mapPointer.height;
-		handleGotoPoint(pinX, pinY);
 	}
 
-	contextMenu.style.display = "none";
-	mapPointer.style.display = "none";
+	closeContextMenu();
 
 }
 
 
 function initialize(){
 	if (useManualFix) {
-		applyFixedPoint(false);
+		applyFixedPoint();
 	} else {
 		connect();
 	}
@@ -768,18 +776,17 @@ canvas.addEventListener("contextmenu", (event) => {
 	mapPointer.style.display = "block";
     contextMenu.style.display = "block";
 	view.setInputMovementEnabled(false);
+	contextMenuLocksMapInput = true;
 });
 
 
 canvas.addEventListener("click", (event) => {
 	// Hide the menu when clicking anywhere else
-	contextMenu.style.display = "none";
-	mapPointer.style.display = "none";
-	view.setInputMovementEnabled(true);
+	closeContextMenu();
 });
 
 
-function applyFixedPoint(moveToOrigin) {
+function applyFixedPoint() {
 	const input = fixedPointInput.value.trim();
 
 	if(!fixedPointHasValidData(input)){
@@ -811,8 +818,7 @@ function applyFixedPoint(moveToOrigin) {
 	text_frame.innerText = "TF Frame: "+frame_id;
 
 	// Restore the fixed frame that belongs to the saved datum so the map can
-	// render before TF has received a transform for that frame. Only Set
-	// recentres the GUI for a newly selected origin.
+	// render before TF has received a transform for that frame.
 	tf.setFixedFrame(frame_id);
 
 	const stamp = { sec: 0, nanosec: 0 };
@@ -836,21 +842,16 @@ function applyFixedPoint(moveToOrigin) {
 	// with the new datum before culling or drawing any tiles.
 	updateFixData();
 
-	if (moveToOrigin) {
-		// A user-selected datum changes what map (0, 0) represents. Keep the
-		// current zoom, but centre the completed map state before drawing it.
-		view.center = { x: 0, y: 0 };
-		settings.view.center = view.center;
-		settings.save();
-		view.sendUpdateEvent();
-	}
 	scheduleDraw();
 	status.setOK();
 	saveSettings();
 }
 
 setFixedPointButton.addEventListener("click", () => {
-	applyFixedPoint(true);
+	closeContextMenu();
+	view.setInputMovementEnabled(true);
+	view.handleDragEnd();
+	applyFixedPoint();
 });
 
 icon.addEventListener("click", (event) => {
@@ -934,7 +935,7 @@ window.addEventListener("navsat_tilecache_updated", scheduleDraw);
 window.addEventListener("tf_fixed_frame_changed", scheduleDraw);
 window.addEventListener("tf_changed", ()=>{
 	if (useManualFix && !map_fix) {
-		applyFixedPoint(false);
+		applyFixedPoint();
 	} else if(map_fix && map_fix.frameId != tf.fixed_frame){
 		scheduleDraw();
 	}
