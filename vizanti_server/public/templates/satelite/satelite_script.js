@@ -231,6 +231,12 @@ function saveSettings(){
 	settings.save();
 }
 
+function syncGlobalFixedFrame(frameId){
+	const globalSettingsWidget = settings.navbar?.find((widget) => widget.type === "settings");
+	if(globalSettingsWidget && settings[globalSettingsWidget.id])
+		settings[globalSettingsWidget.id].fixed_frame = frameId;
+}
+
 function findParentTile(x, y, z, maxLevelsUp = 4) {
 	for (let dz = 1; dz <= maxLevelsUp && (z - dz) >= 0; dz++) {
 		const parentX = x >> dz;
@@ -819,6 +825,7 @@ function applyFixedPoint() {
 
 	// Restore the fixed frame that belongs to the saved datum so the map can
 	// render before TF has received a transform for that frame.
+	syncGlobalFixedFrame(frame_id);
 	tf.setFixedFrame(frame_id);
 
 	const stamp = { sec: 0, nanosec: 0 };

@@ -48,7 +48,7 @@ class ServiceHandler:
                 process = subprocess.Popen(
                     command,
                     shell=True,
-                    executable="/bin/sh",
+                    executable="/bin/bash",
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
@@ -64,7 +64,7 @@ class ServiceHandler:
             process = subprocess.Popen(
                 command,
                 shell=True,
-                executable="/bin/sh",
+                executable="/bin/bash",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
