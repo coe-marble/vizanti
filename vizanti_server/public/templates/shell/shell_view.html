@@ -1,5 +1,5 @@
 <style>
-	.shell-panel { position: fixed; right: 16px; bottom: 16px; left: 16px; z-index: 10001; isolation: isolate; pointer-events: auto; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; height: min(58vh, 520px); min-height: 270px; overflow: hidden; border: 1px solid #5d6a78; border-radius: 10px; background: #121820; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48); color: #d9e7f5; font-family: "Ubuntu Mono", "Cascadia Mono", monospace; }
+	.shell-panel { position: fixed; right: 16px; bottom: 16px; left: 16px; z-index: 10001; isolation: isolate; pointer-events: auto; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto auto auto; height: min(58vh, 520px); min-height: 270px; overflow: hidden; border: 1px solid #5d6a78; border-radius: 10px; background: #121820; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48); color: #d9e7f5; font-family: "Ubuntu Mono", "Cascadia Mono", monospace; }
 	.shell-panel[hidden] { display: none; }
 	.shell-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #354352; background: #19232e; font-family: sans-serif; }
 	.shell-title { color: #9cc8ff; font-size: 0.9rem; font-weight: 700; }
@@ -9,11 +9,13 @@
 	.shell-output { min-height: 0; margin: 0; padding: 12px; overflow: auto; background: linear-gradient(135deg, #10161e, #151d26); color: #d7e5f3; font-family: inherit; font-size: 0.88rem; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 	.shell-command { min-height: 64px; max-height: 150px; box-sizing: border-box; width: 100%; resize: vertical; border: 0; border-top: 1px solid #354352; outline: 0; padding: 10px 12px; background: #0c1117; color: #f3f8fc; font-family: inherit; font-size: 0.92rem; line-height: 1.4; }
 	.shell-command:focus { box-shadow: inset 0 0 0 1px #4e90c8; }
+	.shell-completions { max-height: 110px; margin: 0; padding: 8px 12px; overflow: auto; border-top: 1px solid #354352; background: #10161e; color: #c9d9e8; font-family: inherit; font-size: 0.84rem; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
+	.shell-completions[hidden] { display: none; }
 	.shell-controls { display: flex; align-items: center; gap: 7px; padding: 8px 10px; border-top: 1px solid #354352; background: #19232e; }
 	.shell-controls button { min-width: 38px; margin: 0; padding: 6px 9px; font-family: inherit; }
 	.shell-controls .shell-control.active { border-color: #b28234; background: #7d581d; color: #fff9e9; }
 	.shell-controls .shell-run { min-width: 84px; border-color: #397d57; background: #24573b; color: #effff3; font-family: sans-serif; font-weight: 700; }
-	.shell-status { min-width: 0; overflow: hidden; color: #a9bbc9; font-family: sans-serif; font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+	.shell-status { min-width: 0; padding: 6px 12px; overflow: hidden; border-top: 1px solid #354352; background: #151d26; color: #a9bbc9; font-family: sans-serif; font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
 	@media (max-width: 640px) { .shell-panel { right: 7px; bottom: 7px; left: 7px; height: min(64vh, 520px); } .shell-controls { gap: 5px; padding: 7px; } .shell-controls button { min-width: 34px; padding: 6px; } }
 </style>
 
@@ -25,14 +27,15 @@
 		<button id="{uniqueID}_close" class="shell-close" type="button" aria-label="Close shell">×</button>
 	</header>
 	<pre id="{uniqueID}_output" class="shell-output" aria-live="polite">Ready.</pre>
-	<textarea id="{uniqueID}_command" class="shell-command" rows="3" spellcheck="false" placeholder="Type a command. Ctrl+Enter runs it; Tab completes."></textarea>
+	<div id="{uniqueID}_status" class="shell-status" role="status">Ready.</div>
+	<pre id="{uniqueID}_completions" class="shell-completions" hidden aria-live="polite"></pre>
+	<textarea id="{uniqueID}_command" class="shell-command" rows="3" spellcheck="false" autocapitalize="none" autocorrect="off" autocomplete="off" placeholder="Type a command. Ctrl+Enter runs it; Tab completes."></textarea>
 	<footer class="shell-controls">
 		<button id="{uniqueID}_control" class="shell-control" type="button" title="Send the next letter as Ctrl+letter" aria-pressed="false">Ctrl</button>
 		<button id="{uniqueID}_tab" type="button" title="Complete command; press twice to list choices">Tab ⇥</button>
 		<button id="{uniqueID}_history_previous" type="button" title="Previous command" aria-label="Previous command">↑</button>
 		<button id="{uniqueID}_history_next" type="button" title="Next command" aria-label="Next command">↓</button>
 		<span class="shell-spacer"></span>
-		<span id="{uniqueID}_status" class="shell-status">Ready.</span>
 		<button id="{uniqueID}_run" class="shell-run" type="button">Run</button>
 	</footer>
 </section>

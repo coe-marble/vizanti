@@ -1,0 +1,15 @@
+<div id="{uniqueID}_modal" class="modal_outer noselect">
+	<div class="modal_inner noselect">
+		<h3>Shell</h3>
+		<p id="{uniqueID}_modal_status" class="status">Status: Ok.</p>
+		<hr class="dark_hr"/>
+
+		<label for="{uniqueID}_name">Display Name:</label>
+		<input id="{uniqueID}_name" type="text" value="Shell" maxlength="64" autocapitalize="words">
+
+		<p>Click the icon to open or close this persistent Bash shell. Long press it to change its name.</p>
+
+		<hr class="dark_hr"/>
+		<button id="{uniqueID}_remove" class="delete_button" onclick="removeWidget('{uniqueID}')">Remove Widget</button>
+	</div>
+</div>

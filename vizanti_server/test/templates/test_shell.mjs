@@ -17,17 +17,21 @@ describe('shell plugin interactions', function () {
 		const runButton = element();
 		const statusText = element();
 		const output = element('Ready.');
-		const ctx = loadFunctions('shell', ['runCommand'], environment({
+		const ctx = loadFunctions('shell', ['runCommand', 'finishCommand'], environment({
 			serverApi, commandInput, runButton, statusText, output,
 			sessionId: 'shell_autoID_1', running: false, lastCompletion: null,
+			outputPollTimer: null,
 			setRunning: spy(), setStatus: spy(), appendOutput: spy(), addHistory: spy(),
 			saveSettings: spy(),
 		}));
 		await ctx.runCommand();
 		assert.deepStrictEqual(plain(serverApi.executeCommand.calls), [[{
-			sessionId: 'shell_autoID_1', command: 'echo done', timeoutSeconds: 30, background: false,
+			sessionId: 'shell_autoID_1', command: 'echo done', timeoutSeconds: null,
+			background: false, persistent: true,
 		}]]);
-		assert.deepStrictEqual(plain(ctx.setStatus.calls), [['Exit 0']]);
+		assert.deepStrictEqual(plain(ctx.setStatus.calls), [
+			['Running — Ctrl+C stops it.'], ['Exit 0'],
+		]);
 		assert.deepStrictEqual(plain(ctx.appendOutput.calls), [
 			['$ echo done\n'], ['done\n'],
 		]);

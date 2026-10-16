@@ -12,14 +12,22 @@ import pty
 import queue
 import re
 import secrets
-import shlex
 import signal
 import subprocess
 import termios
 import threading
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
+
+
+BRACKETED_PASTE_SEQUENCE = re.compile(r"(?:\x1b\[|\x9b)\?2004[hl]")
+TERMINAL_ESCAPE_SEQUENCE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))"
+)
+READLINE_CAPTURE_PREFIX = "\x1e__VIZANTI_READLINE__\x1d"
+SHELL_OUTPUT_BUFFER_CHARACTERS = 100000
 
 
 class ShellSession:
@@ -28,6 +36,13 @@ class ShellSession:
     def __init__(self):
         self._execution_lock = threading.Lock()
         self._input_lock = threading.Lock()
+        self._job_lock = threading.Lock()
+        self._job = None
+        self._transcript_lock = threading.Lock()
+        self._transcript = deque()
+        self._transcript_characters = 0
+        self._next_output_cursor = 0
+        self._output_filter_tail = ""
         self._master_fd, slave_fd = pty.openpty()
         attributes = termios.tcgetattr(slave_fd)
         attributes[3] &= ~termios.ECHO
@@ -43,7 +58,15 @@ class ShellSession:
         self._output = queue.Queue()
         self._reader = threading.Thread(target=self._read_output, daemon=True)
         self._reader.start()
-        self.execute("PS1=''; PROMPT_COMMAND=''; set +m", 5)
+        self.execute(
+            "PS1=''; PROMPT_COMMAND=''; set +m; "
+            "bind 'set enable-bracketed-paste off'; "
+            "__vizanti_capture_line() { "
+            "printf '\\036__VIZANTI_READLINE__\\035%s\\035%s\\037' "
+            "\"$READLINE_LINE\" \"$READLINE_POINT\"; }; "
+            "bind -x '\"\\e[24~\":__vizanti_capture_line'",
+            5,
+        )
 
     @property
     def active(self):
@@ -66,7 +89,15 @@ class ShellSession:
         with self._input_lock:
             os.write(self._master_fd, text.encode())
 
-    def execute(self, command, timeout_seconds):
+    @staticmethod
+    def _clean_completion_display(text):
+        """Remove terminal redraw sequences from Bash completion output."""
+        return TERMINAL_ESCAPE_SEQUENCE.sub(
+            "",
+            BRACKETED_PASTE_SEQUENCE.sub("", text),
+        )
+
+    def execute(self, command, timeout_seconds, on_output=None):
         with self._execution_lock:
             if not self.active:
                 raise RuntimeError("The Bash session is no longer running.")
@@ -74,19 +105,33 @@ class ShellSession:
             marker = f"__VIZANTI_SHELL_DONE_{secrets.token_hex(16)}__"
             marker_prefix = f"\x1e{marker}:"
             self._write(
-                f"{command}\nprintf '\\036%s:%s\\037' '{marker}' \"$?\"\n"
+                "bind 'set enable-bracketed-paste off' >/dev/null 2>&1\n"
+                f"{command}\n"
+                "_vizanti_exit_code=$?\n"
+                "bind 'set enable-bracketed-paste off' >/dev/null 2>&1\n"
+                f"printf '\\036%s:%s\\037' '{marker}' \"$_vizanti_exit_code\"\n"
             )
 
             output = []
             pending = ""
-            deadline = time.monotonic() + timeout_seconds
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired(command, timeout_seconds)
+            deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
 
+            def emit(text):
+                if not text:
+                    return
+                output.append(text)
+                if on_output is not None:
+                    on_output(text)
+
+            while True:
                 try:
-                    line = self._output.get(timeout=remaining)
+                    if deadline is None:
+                        line = self._output.get()
+                    else:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(command, timeout_seconds)
+                        line = self._output.get(timeout=remaining)
                 except queue.Empty as error:
                     raise subprocess.TimeoutExpired(command, timeout_seconds) from error
 
@@ -99,8 +144,12 @@ class ShellSession:
                     marker_end = pending.find("\x1f", marker_start + len(marker_prefix))
                     if marker_end >= 0:
                         try:
+                            emit(pending[:marker_start])
                             return (
-                                "".join(output) + pending[:marker_start],
+                                BRACKETED_PASTE_SEQUENCE.sub(
+                                    "",
+                                    "".join(output),
+                                ),
                                 int(pending[
                                     marker_start + len(marker_prefix):marker_end
                                 ]),
@@ -110,14 +159,184 @@ class ShellSession:
                                 "The Bash session returned an invalid exit status."
                             ) from error
                     if marker_start:
-                        output.append(pending[:marker_start])
+                        emit(pending[:marker_start])
                         pending = pending[marker_start:]
                     continue
 
                 retained_characters = max(0, len(pending) - len(marker_prefix))
                 if retained_characters:
+                    emit(pending[:retained_characters])
+                    pending = pending[retained_characters:]
+
+    def complete_readline(self, command, cursor, tab_count):
+        if "\n" in command or "\r" in command:
+            raise ValueError("Shell completion accepts a single command line.")
+
+        with self._execution_lock:
+            if not self.active:
+                raise RuntimeError("The Bash session is no longer running.")
+
+            self._write(
+                command
+                + "\x01"
+                + ("\x1b[C" * cursor)
+                + ("\t" * tab_count)
+                + "\x1b[24~\x15"
+            )
+
+            output = []
+            pending = ""
+            deadline = time.monotonic() + 5
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, 5)
+
+                try:
+                    line = self._output.get(timeout=remaining)
+                except queue.Empty as error:
+                    raise subprocess.TimeoutExpired(command, 5) from error
+
+                if line is None:
+                    raise RuntimeError("The Bash session exited before completion finished.")
+
+                pending += line
+                marker_start = pending.find(READLINE_CAPTURE_PREFIX)
+                if marker_start >= 0:
+                    marker_end = pending.find(
+                        "\x1f",
+                        marker_start + len(READLINE_CAPTURE_PREFIX),
+                    )
+                    if marker_end >= 0:
+                        captured = pending[
+                            marker_start + len(READLINE_CAPTURE_PREFIX):marker_end
+                        ].split("\x1d")
+                        if len(captured) != 2 or not captured[1].isdigit():
+                            raise RuntimeError("Bash returned an invalid completion result.")
+                        return {
+                            "command": captured[0],
+                            "cursor": int(captured[1]),
+                            "display": self._clean_completion_display(
+                                "".join(output) + pending[:marker_start],
+                            ),
+                        }
+
+                    if marker_start:
+                        output.append(pending[:marker_start])
+                        pending = pending[marker_start:]
+                    continue
+
+                retained_characters = max(
+                    0,
+                    len(pending) - len(READLINE_CAPTURE_PREFIX),
+                )
+                if retained_characters:
                     output.append(pending[:retained_characters])
                     pending = pending[retained_characters:]
+
+    def _append_transcript_locked(self, text):
+        if not text:
+            return
+        self._next_output_cursor += 1
+        self._transcript.append((self._next_output_cursor, text))
+        self._transcript_characters += len(text)
+        while (
+            self._transcript
+            and self._transcript_characters > SHELL_OUTPUT_BUFFER_CHARACTERS
+        ):
+            _, discarded = self._transcript.popleft()
+            self._transcript_characters -= len(discarded)
+
+    def _record_output(self, text):
+        with self._transcript_lock:
+            combined = self._output_filter_tail + text
+            retained_characters = min(8, len(combined))
+            publishable = combined[:-retained_characters] if retained_characters else combined
+            self._output_filter_tail = combined[-retained_characters:] if retained_characters else ""
+            self._append_transcript_locked(
+                BRACKETED_PASTE_SEQUENCE.sub("", publishable)
+            )
+
+    def _flush_recorded_output(self):
+        with self._transcript_lock:
+            self._append_transcript_locked(
+                BRACKETED_PASTE_SEQUENCE.sub("", self._output_filter_tail)
+            )
+            self._output_filter_tail = ""
+
+    def start_command(self, command):
+        with self._job_lock:
+            if self._job is not None and self._job["running"]:
+                raise RuntimeError("A command is already running in this Shell session.")
+            job = {
+                "running": True,
+                "success": None,
+                "exitCode": None,
+                "stderr": "",
+            }
+            self._job = job
+
+        with self._transcript_lock:
+            cursor = self._next_output_cursor
+
+        def run():
+            try:
+                _, exit_code = self.execute(command, None, self._record_output)
+                result = {
+                    "running": False,
+                    "success": exit_code == 0,
+                    "exitCode": exit_code,
+                    "stderr": "",
+                }
+            except (OSError, RuntimeError) as error:
+                result = {
+                    "running": False,
+                    "success": False,
+                    "exitCode": -1,
+                    "stderr": str(error),
+                }
+            finally:
+                self._flush_recorded_output()
+
+            with self._job_lock:
+                if self._job is job:
+                    self._job.update(result)
+
+        threading.Thread(target=run, daemon=True).start()
+        return {
+            "success": True,
+            "running": True,
+            "outputCursor": cursor,
+        }
+
+    def read_output(self, cursor):
+        if type(cursor) is not int or cursor < 0:
+            raise ValueError("Shell output cursor must be a non-negative integer.")
+
+        with self._transcript_lock:
+            if cursor > self._next_output_cursor:
+                raise ValueError("Shell output cursor is invalid.")
+            output = "".join(
+                text for entry_cursor, text in self._transcript
+                if entry_cursor > cursor
+            )
+            next_cursor = self._next_output_cursor
+
+        with self._job_lock:
+            job = self._job or {
+                "running": False,
+                "success": True,
+                "exitCode": 0,
+                "stderr": "",
+            }
+            return {
+                "output": output,
+                "outputCursor": next_cursor,
+                "running": job["running"],
+                "success": job["success"],
+                "exitCode": job["exitCode"],
+                "stderr": job["stderr"],
+            }
 
     def send_control(self, key):
         if not self.active:
@@ -201,22 +420,49 @@ class ServiceHandler:
                 self._shell_sessions.pop(session_id, None)
         session.close()
 
-    def execute_command(self, command, timeout_seconds, background, session_id="default"):
+    def execute_command(
+        self,
+        command,
+        timeout_seconds,
+        background,
+        session_id="default",
+        persistent=False,
+    ):
         if not self._allow_shell_commands:
             raise PermissionError("Shell command execution is disabled by the server.")
         self._validate_shell_session_id(session_id)
         self._validate_shell_command(command)
-        if type(timeout_seconds) is not int or not 1 <= timeout_seconds <= self._shell_command_max_timeout_seconds:
+        if not isinstance(persistent, bool):
+            raise ValueError("Persistent shell mode must be a boolean.")
+        if (
+            not persistent
+            and (
+                type(timeout_seconds) is not int
+                or not 1 <= timeout_seconds <= self._shell_command_max_timeout_seconds
+            )
+        ):
             raise ValueError(
                 "Command timeout must be between 1 and "
                 f"{self._shell_command_max_timeout_seconds} seconds.")
         if not isinstance(background, bool):
             raise ValueError("Command background mode must be a boolean.")
+        if persistent and (background or timeout_seconds is not None):
+            raise ValueError(
+                "Persistent shell mode requires foreground execution without a timeout.")
 
         session = self._get_shell_session(session_id)
+        if persistent:
+            try:
+                return session.start_command(command)
+            except (OSError, RuntimeError) as error:
+                raise RuntimeError(str(error)) from error
+
         shell_command = f"{command} &" if background else command
         try:
-            stdout, exit_code = session.execute(shell_command, timeout_seconds)
+            stdout, exit_code = session.execute(
+                shell_command,
+                None if persistent else timeout_seconds,
+            )
             return {
                 "success": exit_code == 0,
                 "exitCode": exit_code,
@@ -246,40 +492,37 @@ class ServiceHandler:
                 "stderr": str(error),
             }
 
-    def complete_command(self, session_id, command, cursor):
+    def read_shell_output(self, session_id, cursor):
+        if not self._allow_shell_commands:
+            raise PermissionError("Shell command execution is disabled by the server.")
+        self._validate_shell_session_id(session_id)
+
+        session = self._get_shell_session(session_id)
+        try:
+            return session.read_output(cursor)
+        except (OSError, RuntimeError) as error:
+            self._reset_shell_session(session_id, session)
+            raise RuntimeError(str(error)) from error
+
+    def complete_command(self, session_id, command, cursor, tab_count):
         if not self._allow_shell_commands:
             raise PermissionError("Shell command execution is disabled by the server.")
         self._validate_shell_session_id(session_id)
         self._validate_shell_command(command, allow_empty=True)
         if type(cursor) is not int or not 0 <= cursor <= len(command):
             raise ValueError("Shell completion cursor is invalid.")
-
-        before_cursor = command[:cursor]
-        match = re.search(r"[^\s]*$", before_cursor)
-        prefix = match.group(0) if match else ""
-        start = cursor - len(prefix)
+        if type(tab_count) is not int or not 1 <= tab_count <= 2:
+            raise ValueError("Shell completion tab count must be one or two.")
         session = self._get_shell_session(session_id)
 
         try:
-            output, _ = session.execute(
-                f"compgen -cdf -- {shlex.quote(prefix)}", 5)
+            return session.complete_readline(command, cursor, tab_count)
         except subprocess.TimeoutExpired:
             self._reset_shell_session(session_id, session)
             raise RuntimeError("Shell completion timed out and the Bash session was reset.")
         except (OSError, RuntimeError) as error:
             self._reset_shell_session(session_id, session)
             raise RuntimeError(str(error)) from error
-
-        candidates = list(dict.fromkeys(
-            line for line in output.splitlines() if line
-        ))[:100]
-        return {
-            "start": start,
-            "cursor": cursor,
-            "prefix": prefix,
-            "completion": os.path.commonprefix(candidates) if candidates else prefix,
-            "candidates": candidates,
-        }
 
     def send_control(self, session_id, key):
         if not self._allow_shell_commands:

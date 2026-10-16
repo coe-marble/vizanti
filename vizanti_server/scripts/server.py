@@ -230,11 +230,29 @@ def execute_shell_command():
 			payload.get("timeoutSeconds", 10),
 			payload.get("background", False),
 			payload.get("sessionId", "default"),
+			payload.get("persistent", False),
 		))
 	except PermissionError as error:
 		return api_error(str(error), 403)
 	except ValueError as error:
 		return api_error(str(error))
+
+
+def read_shell_output():
+	payload = request_json_object()
+	if payload is None:
+		return api_error("Request body must be a JSON object.")
+	try:
+		return jsonify(service_handler.read_shell_output(
+			payload.get("sessionId", "default"),
+			payload.get("outputCursor", 0),
+		))
+	except PermissionError as error:
+		return api_error(str(error), 403)
+	except ValueError as error:
+		return api_error(str(error))
+	except RuntimeError as error:
+		return api_error(str(error), 503)
 
 
 def complete_shell_command():
@@ -246,6 +264,7 @@ def complete_shell_command():
 			payload.get("sessionId", "default"),
 			payload.get("command", ""),
 			payload.get("cursor"),
+			payload.get("tabCount", 1),
 		))
 	except PermissionError as error:
 		return api_error(str(error), 403)
@@ -447,6 +466,7 @@ def main(args=None):
 	app.add_url_rule(param_base_url + '/ros_launch_params', 'ros_launch_params', list_ros_launch_params)
 	app.add_url_rule(param_base_url + '/default_widget_config', 'get_default_widget_config', get_default_widget_config)
 	app.add_url_rule(param_base_url + '/api/shell/execute', 'execute_shell_command', execute_shell_command, methods=['POST'])
+	app.add_url_rule(param_base_url + '/api/shell/output', 'read_shell_output', read_shell_output, methods=['POST'])
 	app.add_url_rule(param_base_url + '/api/shell/complete', 'complete_shell_command', complete_shell_command, methods=['POST'])
 	app.add_url_rule(param_base_url + '/api/shell/control', 'send_shell_control', send_shell_control, methods=['POST'])
 	app.add_url_rule(param_base_url + '/api/ros2/parameters', 'get_node_parameters', get_node_parameters, methods=['GET'])

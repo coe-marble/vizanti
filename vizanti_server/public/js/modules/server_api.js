@@ -24,6 +24,10 @@ export const serverApi = Object.freeze({
 		return post("/api/shell/execute", request);
 	},
 
+	readShellOutput(request) {
+		return post("/api/shell/output", request);
+	},
+
 	completeCommand(request) {
 		return post("/api/shell/complete", request);
 	},
