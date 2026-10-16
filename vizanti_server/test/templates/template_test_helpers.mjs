@@ -20,7 +20,7 @@ const behaviorContracts = {
 	map: ['endpointService.subscribe', 'createEndpointConfiguration'],
 	markerarray: ['endpointService.subscribe', 'createEndpointConfiguration'],
 	navball: ['endpointService.subscribe', 'createEndpointConfiguration'],
-	shell: ['endpointService.commandShortcuts', 'serverApi.executeCommand', 'createAdapterConfigurationEditor'],
+	shell: ['serverApi.executeCommand', 'serverApi.completeCommand', 'serverApi.sendControl'],
 	odom: ['nav_msgs/msg/Odometry'],
 	path: ['nav_msgs/msg/Path'],
 	pointcloud: ['sensor_msgs/msg/PointCloud2'],

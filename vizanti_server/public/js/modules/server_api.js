@@ -24,6 +24,14 @@ export const serverApi = Object.freeze({
 		return post("/api/shell/execute", request);
 	},
 
+	completeCommand(request) {
+		return post("/api/shell/complete", request);
+	},
+
+	sendControl(request) {
+		return post("/api/shell/control", request);
+	},
+
 	getNodeParameters(node) {
 		return requestJson(`/api/ros2/parameters?node=${encodeURIComponent(node)}`);
 	},

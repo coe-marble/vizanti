@@ -226,11 +226,50 @@ def execute_shell_command():
 		return api_error("Request body must be a JSON object.")
 	try:
 		return jsonify(service_handler.execute_command(
-			payload.get("command"), payload.get("timeoutSeconds", 10), payload.get("background", False)))
+			payload.get("command"),
+			payload.get("timeoutSeconds", 10),
+			payload.get("background", False),
+			payload.get("sessionId", "default"),
+		))
 	except PermissionError as error:
 		return api_error(str(error), 403)
 	except ValueError as error:
 		return api_error(str(error))
+
+
+def complete_shell_command():
+	payload = request_json_object()
+	if payload is None:
+		return api_error("Request body must be a JSON object.")
+	try:
+		return jsonify(service_handler.complete_command(
+			payload.get("sessionId", "default"),
+			payload.get("command", ""),
+			payload.get("cursor"),
+		))
+	except PermissionError as error:
+		return api_error(str(error), 403)
+	except ValueError as error:
+		return api_error(str(error))
+	except RuntimeError as error:
+		return api_error(str(error), 503)
+
+
+def send_shell_control():
+	payload = request_json_object()
+	if payload is None:
+		return api_error("Request body must be a JSON object.")
+	try:
+		return jsonify(service_handler.send_control(
+			payload.get("sessionId", "default"),
+			payload.get("key"),
+		))
+	except PermissionError as error:
+		return api_error(str(error), 403)
+	except ValueError as error:
+		return api_error(str(error))
+	except RuntimeError as error:
+		return api_error(str(error), 503)
 
 
 def get_node_parameters():
@@ -408,6 +447,8 @@ def main(args=None):
 	app.add_url_rule(param_base_url + '/ros_launch_params', 'ros_launch_params', list_ros_launch_params)
 	app.add_url_rule(param_base_url + '/default_widget_config', 'get_default_widget_config', get_default_widget_config)
 	app.add_url_rule(param_base_url + '/api/shell/execute', 'execute_shell_command', execute_shell_command, methods=['POST'])
+	app.add_url_rule(param_base_url + '/api/shell/complete', 'complete_shell_command', complete_shell_command, methods=['POST'])
+	app.add_url_rule(param_base_url + '/api/shell/control', 'send_shell_control', send_shell_control, methods=['POST'])
 	app.add_url_rule(param_base_url + '/api/ros2/parameters', 'get_node_parameters', get_node_parameters, methods=['GET'])
 	app.add_url_rule(param_base_url + '/api/ros2/parameters', 'set_node_parameter', set_node_parameter, methods=['POST'])
 	app.add_url_rule(param_base_url + '/api/ros2/recording', 'recording_status', recording_status, methods=['GET'])
