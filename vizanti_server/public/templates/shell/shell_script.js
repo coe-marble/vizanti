@@ -239,6 +239,12 @@ controlButton.addEventListener("click", () => {
 });
 previousButton.addEventListener("click", () => showHistory(-1));
 nextButton.addEventListener("click", () => showHistory(1));
+for (const eventName of [
+	"click", "contextmenu", "mousedown", "mousemove", "mouseup", "pointerdown", "pointermove",
+	"pointerup", "touchstart", "touchmove", "touchend", "touchcancel", "wheel",
+]) {
+	panel.addEventListener(eventName, (event) => event.stopPropagation());
+}
 commandInput.addEventListener("input", () => {
 	lastCompletion = null;
 	saveSettings();

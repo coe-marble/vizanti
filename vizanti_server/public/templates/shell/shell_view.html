@@ -1,5 +1,5 @@
 <style>
-	.shell-panel { position: fixed; right: 16px; bottom: 16px; left: 16px; z-index: 1002; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; height: min(58vh, 520px); min-height: 270px; overflow: hidden; border: 1px solid #5d6a78; border-radius: 10px; background: #121820; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48); color: #d9e7f5; font-family: "Ubuntu Mono", "Cascadia Mono", monospace; }
+	.shell-panel { position: fixed; right: 16px; bottom: 16px; left: 16px; z-index: 10001; isolation: isolate; pointer-events: auto; display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; height: min(58vh, 520px); min-height: 270px; overflow: hidden; border: 1px solid #5d6a78; border-radius: 10px; background: #121820; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.48); color: #d9e7f5; font-family: "Ubuntu Mono", "Cascadia Mono", monospace; }
 	.shell-panel[hidden] { display: none; }
 	.shell-header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #354352; background: #19232e; font-family: sans-serif; }
 	.shell-title { color: #9cc8ff; font-size: 0.9rem; font-weight: 700; }
